@@ -321,6 +321,26 @@ class BrowserDatabase {
     return await this.getElectronApi().dbCall('updateLeaveRequestStatus', id, status, approvedBy, rejectReason);
   }
 
+  async getMonthlyAccounts(year: number, branchId?: number): Promise<any[]> {
+    return await this.getElectronApi().dbCall('getMonthlyAccounts', year, branchId);
+  }
+
+  async saveMonthlyAccount(record: any): Promise<any> {
+    return await this.getElectronApi().dbCall('saveMonthlyAccount', record);
+  }
+
+  async getExpenses(year: number, month: number, branchId?: number): Promise<any[]> {
+    return await this.getElectronApi().dbCall('getExpenses', year, month, branchId);
+  }
+
+  async createExpense(expense: any, branchId?: number): Promise<any> {
+    return await this.getElectronApi().dbCall('createExpense', expense, branchId);
+  }
+
+  async deleteExpense(id: number): Promise<any> {
+    return await this.getElectronApi().dbCall('deleteExpense', id);
+  }
+
 }
 
 
@@ -371,8 +391,9 @@ export const useProducts = (branchId?: number) => {
             const activeBranchName = activeBranch.name.trim().toLowerCase();
             const categoriesList = await db.getCategories();
             filteredProducts = (productList || []).filter(p => {
-              if (!p.categoryName) return true;
-              const cat = categoriesList.find(c => c.name.toLowerCase() === p.categoryName.toLowerCase());
+              const catName = p.categoryName;
+              if (!catName) return true;
+              const cat = categoriesList.find(c => c.name.toLowerCase() === catName.toLowerCase());
               if (!cat || !cat.allowedBranches) return true;
               const allowed = cat.allowedBranches.split(',').map((bName: string) => bName.trim().toLowerCase());
               return allowed.includes(activeBranchName);
@@ -1159,5 +1180,56 @@ export const useBikeServiceReminders = (branchId?: number) => {
     updateReminder,
     deleteReminder,
     refreshReminders: loadReminders
+  };
+};
+
+export const useExpenses = (branchId?: number) => {
+  const [expenses, setExpenses] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const db = useDatabase();
+
+  const getTargetBranchId = () => branchId !== undefined ? branchId : getActiveBranchId();
+
+  const loadExpenses = async (year: number, month: number) => {
+    try {
+      setLoading(true);
+      const rows = await db.getExpenses(year, month, getTargetBranchId());
+      setExpenses(rows || []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to load expenses');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const addExpense = async (expenseData: { type: string; title: string; amount: number; date: string; billImage?: string | null }) => {
+    try {
+      const id = await db.createExpense(expenseData, getTargetBranchId());
+      return id;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add expense');
+      throw err;
+    }
+  };
+
+  const deleteExpense = async (id: number) => {
+    try {
+      const success = await db.deleteExpense(id);
+      return success;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete expense');
+      throw err;
+    }
+  };
+
+  return {
+    expenses,
+    loading,
+    error,
+    addExpense,
+    deleteExpense,
+    refreshExpenses: loadExpenses
   };
 };

@@ -1530,6 +1530,7 @@ const Settings: React.FC = () => {
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4 mb-6">
               {[
                 { id: 'dashboard', label: 'Dashboard' },
+                { id: 'accounts', label: 'Accounts' },
                 { id: 'billing', label: 'New Bill' },
                 { id: 'services', label: 'Service Tickets' },
                 { id: 'service_bill', label: 'Service Billing' },

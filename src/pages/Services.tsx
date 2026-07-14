@@ -17,7 +17,7 @@ import {
   ArrowRight,
   RefreshCw
 } from 'lucide-react';
-import { useServices, useCustomers } from '../hooks/useDatabase';
+import { useServices, useCustomers, useBills } from '../hooks/useDatabase';
 import { Service, Bill, BillItem } from '../types';
 import {
   generateQRData,
@@ -60,6 +60,7 @@ const formatIndianVehicleNumber = (val: string) => {
 const Services: React.FC = () => {
   const { services, addService, updateService, deleteService, refreshServices, loading } = useServices();
   const { customers } = useCustomers();
+  const { addBill } = useBills();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'pending' | 'in_progress' | 'completed' | 'cancelled'>('all');
@@ -1258,6 +1259,104 @@ const Services: React.FC = () => {
                       estimatedCost: finalCost,
                       status: 'completed'
                     });
+
+                    // Construct Bill object to save service sale in database Bills table
+                    const lines = newDesc ? newDesc.split('\n') : [];
+                    const parts: Array<{ name: string; qty: number; price: number; total: number }> = [];
+                    const additionals: Array<{ name: string; amount: number }> = [];
+                    const laborLines: string[] = [];
+                    
+                    lines.forEach(line => {
+                      const partRegex = /-\s*Part:\s*(.+)\s*\(Qty:\s*(\d+)\s*@\s*₹([\d.]+)\)/i;
+                      const addRegex = /-\s*Additional:\s*(.+)\s*\(₹([\d.]+)\)/i;
+                      
+                      const partMatch = line.match(partRegex);
+                      const addMatch = line.match(addRegex);
+                      
+                      if (partMatch) {
+                        parts.push({
+                          name: partMatch[1].trim(),
+                          qty: parseInt(partMatch[2]),
+                          price: parseFloat(partMatch[3]),
+                          total: parseInt(partMatch[2]) * parseFloat(partMatch[3])
+                        });
+                      } else if (addMatch) {
+                        additionals.push({
+                          name: addMatch[1].trim(),
+                          amount: parseFloat(addMatch[2])
+                        });
+                      } else {
+                        if (line.trim()) {
+                          laborLines.push(line.replace(/^-\s*/, '').trim());
+                        }
+                      }
+                    });
+                    
+                    const partsTotal = parts.reduce((sum, p) => sum + p.total, 0);
+                    const additionalsTotalAmt = additionals.reduce((sum, a) => sum + a.amount, 0);
+                    const laborTotalVal = Math.max(0, finalCost - partsTotal - additionalsTotalAmt);
+
+                    const dbBillItems: any[] = [];
+
+                    // Add spares
+                    parts.forEach(p => {
+                      dbBillItems.push({
+                        productId: -999, // custom/workshop product identifier
+                        quantity: p.qty,
+                        unitPrice: p.price,
+                        discount: 0,
+                        gst: 18,
+                        totalPrice: p.total,
+                        productImage: ''
+                      });
+                    });
+
+                    // Add additionals
+                    additionals.forEach(a => {
+                      dbBillItems.push({
+                        productId: -999,
+                        quantity: 1,
+                        unitPrice: a.amount,
+                        discount: 0,
+                        gst: 18,
+                        totalPrice: a.amount,
+                        productImage: ''
+                      });
+                    });
+
+                    // Add labor
+                    if (laborTotalVal > 0) {
+                      dbBillItems.push({
+                        productId: -999,
+                        quantity: 1,
+                        unitPrice: laborTotalVal,
+                        discount: 0,
+                        gst: 18,
+                        totalPrice: laborTotalVal,
+                        productImage: ''
+                      });
+                    }
+
+                    const totalGstVal = finalCost - (finalCost / 1.18);
+                    const billNumber = `SRV-${billingModal.service.id}`;
+
+                    const newBillRecord: Bill = {
+                      id: 0,
+                      customerId: billingModal.service.customerId || 0,
+                      billNumber,
+                      totalAmount: finalCost,
+                      totalDiscount: 0,
+                      totalGst: totalGstVal,
+                      finalAmount: finalCost,
+                      paymentMethod: 'cash',
+                      status: 'completed',
+                      createdAt: new Date().toISOString(),
+                      updatedAt: new Date().toISOString(),
+                      items: dbBillItems,
+                      isGstBill: true
+                    };
+
+                    await addBill(newBillRecord);
 
                     // Construct cloned object for print parser
                     const updatedServiceForPrint = {

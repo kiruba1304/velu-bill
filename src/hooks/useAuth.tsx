@@ -8,7 +8,7 @@ export interface AuthContextType {
   activeBranchId: number;
   loading: boolean;
   error: string | null;
-  login: (username: string, password: string) => Promise<User>;
+  login: (username: string, password: string, rememberMe?: boolean) => Promise<User>;
   logout: () => void;
   setActiveBranchId: (branchId: number) => void;
   refreshPermissions: () => Promise<void>;
@@ -23,6 +23,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 const ALL_PAGES = [
   'dashboard',
+  'accounts',
   'billing',
   'services',
   'service_bill',
@@ -44,6 +45,18 @@ const ALL_PAGES = [
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
+      const persistent = localStorage.getItem('billing_app_persistent_user');
+      if (persistent) {
+        const session = JSON.parse(persistent);
+        const age = Date.now() - Number(session.timestamp || 0);
+        const thirtyDaysMs = 30 * 24 * 60 * 60 * 1000;
+        if (age < thirtyDaysMs) {
+          sessionStorage.setItem('billing_app_current_user', JSON.stringify(session.user));
+          return session.user;
+        } else {
+          localStorage.removeItem('billing_app_persistent_user');
+        }
+      }
       const saved = sessionStorage.getItem('billing_app_current_user');
       return saved ? JSON.parse(saved) : null;
     } catch {
@@ -54,7 +67,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [branches, setBranches] = useState<any[]>([]);
   const [activeBranchId, setActiveBranchIdState] = useState<number>(() => {
     try {
-      const savedUser = sessionStorage.getItem('billing_app_current_user');
+      let savedUser = sessionStorage.getItem('billing_app_current_user');
+      if (!savedUser) {
+        const persistent = localStorage.getItem('billing_app_persistent_user');
+        if (persistent) {
+          const session = JSON.parse(persistent);
+          savedUser = JSON.stringify(session.user);
+        }
+      }
       if (savedUser) {
         const u = JSON.parse(savedUser);
         if (u.branchId) return u.branchId;
@@ -156,13 +176,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     refreshCurrentUser();
   }, [currentUser?.username]);
 
-  const login = async (username: string, password: string) => {
+  const login = async (username: string, password: string, rememberMe?: boolean) => {
     try {
       setLoading(true);
       setError(null);
       const user = await db.login(username, password);
       setCurrentUser(user);
       sessionStorage.setItem('billing_app_current_user', JSON.stringify(user));
+      
+      if (rememberMe) {
+        localStorage.setItem('billing_app_persistent_user', JSON.stringify({
+          user,
+          timestamp: Date.now()
+        }));
+      } else {
+        localStorage.removeItem('billing_app_persistent_user');
+      }
+
       if (user.branchId) {
         setActiveBranchIdState(user.branchId);
       }
@@ -181,6 +211,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setCurrentUser(null);
     sessionStorage.removeItem('billing_app_current_user');
     sessionStorage.removeItem('billing_app_active_branch_id');
+    localStorage.removeItem('billing_app_persistent_user');
     window.dispatchEvent(new Event('branch-changed'));
   };
 

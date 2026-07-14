@@ -384,6 +384,35 @@ async function initDb() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS MonthlyAccounts (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      year INT NOT NULL,
+      month INT NOT NULL,
+      customSales DECIMAL(12,2) DEFAULT 0.00,
+      customExpenses DECIMAL(12,2) DEFAULT 0.00,
+      notes TEXT,
+      branchId INT DEFAULT 1,
+      createdAt VARCHAR(255),
+      updatedAt VARCHAR(255),
+      UNIQUE KEY uq_year_month_branch (year, month, branchId)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS Expenses (
+      id BIGINT AUTO_INCREMENT PRIMARY KEY,
+      type VARCHAR(255) NOT NULL,
+      title VARCHAR(255) NOT NULL,
+      amount DECIMAL(12,2) NOT NULL DEFAULT 0.00,
+      date VARCHAR(255) NOT NULL,
+      billImage LONGTEXT NULL,
+      branchId INT DEFAULT 1,
+      createdAt VARCHAR(255),
+      updatedAt VARCHAR(255)
+    )
+  `);
+
   // Helper to add branchId column to tables if not present
   async function addColumnIfNotExists(tableName, columnName, definition) {
     try {
@@ -411,6 +440,8 @@ async function initDb() {
   await addColumnIfNotExists('Parties', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('PartyMovements', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('PartyPayments', 'branchId', 'INT NULL DEFAULT 1');
+  await addColumnIfNotExists('Expenses', 'branchId', 'INT NULL DEFAULT 1');
+  await addColumnIfNotExists('Expenses', 'billImage', 'LONGTEXT NULL');
 
   // Add Vehicle fields to Customers table
   await addColumnIfNotExists('Customers', 'vehicleName', 'VARCHAR(255) NULL');
@@ -458,7 +489,9 @@ async function initDb() {
     'Parties',
     'PartyMovements',
     'PartyPayments',
-    'InventoryTransactions'
+    'InventoryTransactions',
+    'MonthlyAccounts',
+    'Expenses'
   ];
   for (const tableName of tablesToMigrate) {
     try {
@@ -1030,7 +1063,9 @@ const KEY_MAPPINGS = {
   bikeid: 'bikeId',
   servicedate: 'serviceDate',
   nextservicedate: 'nextServiceDate',
-  remindersent: 'reminderSent'
+  remindersent: 'reminderSent',
+  customsales: 'customSales',
+  customexpenses: 'customExpenses'
 };
 
 function normalizeKeys(obj) {
@@ -1482,8 +1517,12 @@ async function _executeDbCallInner(method, args) {
       const now = new Date().toISOString();
       const fields = [];
       const values = [];
+      const ignoredFields = new Set([
+        'id', 'createdAt', 'updatedAt',
+        'totalPurchases', 'purchaseCount', 'lastPurchaseDate', 'lastPurchaseAmount'
+      ]);
       for (const [key, val] of Object.entries(updates)) {
-        if (key === 'id' || key === 'createdAt' || key === 'updatedAt') continue;
+        if (ignoredFields.has(key)) continue;
         fields.push(`\`${key}\` = ?`);
         if (key === 'creditHistory') {
           values.push(JSON.stringify(val || []));
@@ -2207,6 +2246,70 @@ async function _executeDbCallInner(method, args) {
     case 'deleteBikeServiceReminder': {
       const [id] = args;
       const [res] = await pool.query('DELETE FROM BikeServiceReminders WHERE id = ?', [id]);
+      return res.affectedRows > 0;
+    }
+    case 'getMonthlyAccounts': {
+      const [year, branchId] = args;
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM MonthlyAccounts WHERE year = ? ORDER BY month ASC', [year])
+        : await pool.query('SELECT * FROM MonthlyAccounts WHERE year = ? AND (branchId = ? OR branchId IS NULL) ORDER BY month ASC', [year, branchId || 1]);
+      return rows;
+    }
+    case 'saveMonthlyAccount': {
+      const [record] = args;
+      const now = new Date().toISOString();
+      const [res] = await pool.query(
+        `INSERT INTO MonthlyAccounts (year, month, customSales, customExpenses, notes, branchId, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE
+           customSales = VALUES(customSales),
+           customExpenses = VALUES(customExpenses),
+           notes = VALUES(notes),
+           updatedAt = VALUES(updatedAt)`,
+        [
+          record.year,
+          record.month,
+          record.customSales || 0.00,
+          record.customExpenses || 0.00,
+          record.notes || '',
+          record.branchId || 1,
+          now,
+          now
+        ]
+      );
+      return res.insertId || true;
+    }
+    case 'getExpenses': {
+      const [year, month, branchId] = args;
+      const datePrefix = `${year}-${String(month).padStart(2, '0')}`;
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Expenses WHERE date LIKE ? ORDER BY date DESC, id DESC', [`${datePrefix}%`])
+        : await pool.query('SELECT * FROM Expenses WHERE date LIKE ? AND (branchId = ? OR branchId IS NULL) ORDER BY date DESC, id DESC', [`${datePrefix}%`, branchId || 1]);
+      return rows;
+    }
+    case 'createExpense': {
+      const [expenseData, branchId] = args;
+      const targetBranch = branchId || 1;
+      const now = new Date().toISOString();
+      const [res] = await pool.query(
+        `INSERT INTO Expenses (type, title, amount, date, billImage, branchId, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          expenseData.type,
+          expenseData.title,
+          expenseData.amount || 0.00,
+          expenseData.date,
+          expenseData.billImage || null,
+          targetBranch,
+          now,
+          now
+        ]
+      );
+      return res.insertId;
+    }
+    case 'deleteExpense': {
+      const [id] = args;
+      const [res] = await pool.query('DELETE FROM Expenses WHERE id = ?', [id]);
       return res.affectedRows > 0;
     }
     default:

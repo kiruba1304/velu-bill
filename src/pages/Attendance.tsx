@@ -24,6 +24,7 @@ import {
   ArrowLeft
 } from 'lucide-react';
 import QRCode from 'qrcode';
+import { Html5Qrcode } from 'html5-qrcode';
 import { useDatabase } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
 import { AttendanceRecord, AttendanceRules, Holiday, LeavePermissionRequest } from '../types';
@@ -81,6 +82,9 @@ export default function Attendance() {
   const [verificationMethod, setVerificationMethod] = useState<'otp' | 'qr' | null>(null);
   const [verificationInput, setVerificationInput] = useState('');
   const [verificationError, setVerificationError] = useState('');
+  const [qrManualMode, setQrManualMode] = useState(false);
+  const [cameras, setCameras] = useState<{ id: string; label: string }[]>([]);
+  const [selectedCameraId, setSelectedCameraId] = useState<string>('');
 
   // Exit generator fullscreen authentication states
   const [showExitGeneratorAuth, setShowExitGeneratorAuth] = useState(false);
@@ -519,6 +523,111 @@ export default function Attendance() {
       return () => clearInterval(interval);
     }
   }, [activeTab, generatorAuthenticated]);
+
+  // Camera QR Code Scanning Hook & Auto-Verifier
+  const triggerAutoVerify = async (scannedCode: string) => {
+    setSaving(true);
+    setVerificationError('');
+    let otp = '';
+    if (scannedCode.startsWith('BILL_PODU_ATTENDANCE_')) {
+      otp = scannedCode.replace('BILL_PODU_ATTENDANCE_', '');
+    } else {
+      setVerificationError("Invalid QR Code. Please scan the manager's active QR code.");
+      setSaving(false);
+      return;
+    }
+
+    const nowChunk = Math.floor(Date.now() / 30000);
+    const branchId = currentUser?.branchId || activeBranchId || 1;
+    const validOTP1 = generateOTP(nowChunk, branchId);
+    const validOTP2 = generateOTP(nowChunk - 1, branchId);
+
+    if (otp === validOTP1 || otp === validOTP2) {
+      const action = verificationPendingAction;
+      setVerificationPendingAction(null);
+      setVerificationMethod(null);
+      setQrManualMode(false);
+      if (action === 'in') {
+        await handleCheckInAction();
+      } else if (action === 'out') {
+        await handleCheckOutAction();
+      }
+    } else {
+      setVerificationError('Verification failed. Invalid or expired token.');
+    }
+    setSaving(false);
+  };
+
+  // Camera List Enumerator Effect
+  useEffect(() => {
+    if (verificationMethod === 'qr' && verificationPendingAction) {
+      Html5Qrcode.getCameras().then(devices => {
+        if (devices && devices.length > 0) {
+          setCameras(devices);
+          setSelectedCameraId(prev => {
+            const exists = devices.some(d => d.id === prev);
+            return exists ? prev : devices[0].id;
+          });
+        }
+      }).catch(err => {
+        console.error("Error enumerating cameras:", err);
+      });
+    } else {
+      setCameras([]);
+      setSelectedCameraId('');
+    }
+  }, [verificationMethod, verificationPendingAction]);
+
+  useEffect(() => {
+    let html5QrCode: Html5Qrcode | null = null;
+    let isScanning = false;
+
+    if (verificationMethod === 'qr' && verificationPendingAction && !qrManualMode) {
+      const scannerId = "qr-reader-viewport";
+      
+      const startScanner = async () => {
+        try {
+          html5QrCode = new Html5Qrcode(scannerId);
+          // Prefer selectedCameraId if set, else environment camera facing
+          const cameraConfig = selectedCameraId ? selectedCameraId : { facingMode: "environment" };
+          
+          await html5QrCode.start(
+            cameraConfig,
+            {
+              fps: 10
+            },
+            async (decodedText) => {
+              // Successfully decoded QR code!
+              setVerificationInput(decodedText);
+              await triggerAutoVerify(decodedText);
+            },
+            () => {
+              // Ignore frames with decode failure (standard behaviour of scanner)
+            }
+          );
+          isScanning = true;
+        } catch (err) {
+          console.error("QR Code camera instantiation error:", err);
+          setVerificationError("Could not access camera. Please verify permission settings.");
+        }
+      };
+
+      const timer = setTimeout(() => {
+        startScanner();
+      }, 300);
+
+      return () => {
+        clearTimeout(timer);
+        if (html5QrCode && isScanning) {
+          html5QrCode.stop().then(() => {
+            html5QrCode!.clear();
+          }).catch(err => {
+            console.error("Cleanup stop scanner failed:", err);
+          });
+        }
+      };
+    }
+  }, [verificationMethod, verificationPendingAction, qrManualMode, selectedCameraId]);
 
   const handleVerifyAndSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2078,7 +2187,7 @@ export default function Attendance() {
                 </button>
               </form>
             ) : (
-              <div className="fixed inset-0 z-[120] bg-slate-950 text-white flex flex-col items-center justify-center p-6 animate-fadeIn">
+              <div className="fixed inset-0 z-[120] bg-slate-950 text-white flex flex-col items-center justify-center p-4 sm:p-6 overflow-y-auto animate-fadeIn">
                 {/* Exit authentication dialog */}
                 {showExitGeneratorAuth && (
                   <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-[130] p-4 text-slate-900">
@@ -2142,33 +2251,33 @@ export default function Attendance() {
                     </div>
                   </div>
                 )}
-
+ 
                 {/* Back arrow button in top left */}
-                <div className="absolute top-8 left-8">
+                <div className="absolute top-4 left-4 sm:top-8 sm:left-8">
                   <button
                     onClick={() => {
                       setShowExitGeneratorAuth(true);
                       setExitError('');
                     }}
-                    className="flex items-center gap-2 text-slate-400 hover:text-white transition-colors bg-white/5 border border-white/10 p-3 rounded-2xl shadow hover:bg-white/10"
+                    className="flex items-center gap-1.5 text-slate-400 hover:text-white transition-colors bg-white/5 border border-white/10 p-2 sm:p-3 rounded-xl sm:rounded-2xl shadow hover:bg-white/10"
                     title="Exit Fullscreen Session"
                   >
-                    <ArrowLeft className="w-5 h-5" />
-                    <span className="text-sm font-semibold">Exit Session</span>
+                    <ArrowLeft className="w-4 h-4 sm:w-5 sm:h-5" />
+                    <span className="text-xs sm:text-sm font-semibold">Exit Session</span>
                   </button>
                 </div>
-
+ 
                 {/* Content of the generator */}
-                <div className="text-center space-y-8 py-4 flex flex-col items-center max-w-lg">
+                <div className="text-center space-y-6 sm:space-y-8 py-4 flex flex-col items-center max-w-lg mt-14 sm:mt-0">
                   <div>
-                    <h2 className="text-2xl font-extrabold tracking-tight text-white">Attendance Verification Screen</h2>
-                    <p className="text-xs text-slate-400 mt-1">Keep this screen open for employees checking in/out.</p>
+                    <h2 className="text-lg sm:text-2xl font-extrabold tracking-tight text-white">Attendance Verification Screen</h2>
+                    <p className="text-[10px] sm:text-xs text-slate-400 mt-1">Keep this screen open for employees checking in/out.</p>
                   </div>
-
+ 
                   <div className="flex bg-white/5 p-1 rounded-2xl border border-white/10 gap-1 w-fit">
                     <button
                       onClick={() => setGeneratorMode('otp')}
-                      className={`flex items-center gap-2 px-5 py-2.5 text-xs font-semibold rounded-xl transition-all duration-200 ${
+                      className={`flex items-center gap-1.5 px-3 py-2 sm:px-5 sm:py-2.5 text-[10px] sm:text-xs font-semibold rounded-xl transition-all duration-200 ${
                         generatorMode === 'otp' ? 'bg-white text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
                       }`}
                     >
@@ -2176,21 +2285,21 @@ export default function Attendance() {
                     </button>
                     <button
                       onClick={() => setGeneratorMode('qr')}
-                      className={`flex items-center gap-2 px-5 py-2.5 text-xs font-semibold rounded-xl transition-all duration-200 ${
+                      className={`flex items-center gap-1.5 px-3 py-2 sm:px-5 sm:py-2.5 text-[10px] sm:text-xs font-semibold rounded-xl transition-all duration-200 ${
                         generatorMode === 'qr' ? 'bg-white text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
                       }`}
                     >
                       <QrCode className="w-3.5 h-3.5" /> QR Code
                     </button>
                   </div>
-
-                  <div className="flex flex-col items-center justify-center min-h-[260px] w-full">
+ 
+                  <div className="flex flex-col items-center justify-center min-h-[220px] sm:min-h-[260px] w-full">
                     {generatorMode === 'otp' ? (
                       <div className="space-y-4">
                         <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 block">Current Active OTP</span>
-                        <div className="flex justify-center gap-3">
+                        <div className="flex justify-center gap-1.5 sm:gap-3">
                           {currentOtp.split('').map((char, index) => (
-                            <div key={index} className="w-14 h-20 rounded-2xl border-2 border-slate-800 bg-slate-900 flex items-center justify-center text-4xl font-black text-white shadow-xl">
+                            <div key={index} className="w-9 h-14 text-2xl sm:w-14 sm:h-20 sm:text-4xl rounded-xl sm:rounded-2xl border-2 border-slate-800 bg-slate-900 flex items-center justify-center font-black text-white shadow-xl">
                               {char}
                             </div>
                           ))}
@@ -2200,8 +2309,8 @@ export default function Attendance() {
                       <div className="space-y-4">
                         <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 block">Scan Current QR Code</span>
                         {qrCodeDataUrl ? (
-                          <div className="p-4 bg-white border border-slate-850 rounded-3xl shadow-2xl">
-                            <img src={qrCodeDataUrl} alt="Attendance QR Code" className="w-56 h-56 object-contain" />
+                          <div className="p-3 sm:p-4 bg-white border border-slate-850 rounded-2xl sm:rounded-3xl shadow-2xl">
+                            <img src={qrCodeDataUrl} alt="Attendance QR Code" className="w-40 h-40 sm:w-56 sm:h-56 object-contain" />
                           </div>
                         ) : (
                           <p className="text-xs text-slate-500">Generating QR code...</p>
@@ -2209,7 +2318,7 @@ export default function Attendance() {
                       </div>
                     )}
                   </div>
-
+ 
                   <div className="flex flex-col items-center gap-3">
                     <div className="flex items-center gap-2 text-xs font-semibold text-slate-400">
                       <span className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-pulse" />
@@ -2298,6 +2407,56 @@ export default function Attendance() {
                       className="input w-full text-center text-2xl font-bold tracking-widest py-3"
                     />
                   </div>
+                ) : !qrManualMode ? (
+                  <div className="space-y-4 text-center">
+                    <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">Scan Manager's QR Code</label>
+                    
+                                    <div className="relative w-full max-w-[280px] h-[280px] mx-auto bg-black rounded-3xl overflow-hidden border-4 border-slate-100 shadow-inner flex items-center justify-center">
+                      {/* Live Camera Viewport */}
+                      <div id="qr-reader-viewport" className="w-full h-full object-cover"></div>
+                      
+                      {/* Grid Corner Highlights Viewfinder */}
+                      <div className="absolute inset-4 border border-emerald-500/10 rounded-2xl pointer-events-none z-10">
+                        <div className="absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 border-emerald-500 rounded-tl-md" />
+                        <div className="absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 border-emerald-500 rounded-tr-md" />
+                        <div className="absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 border-emerald-500 rounded-bl-md" />
+                        <div className="absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 border-emerald-500 rounded-br-md" />
+                      </div>
+                      
+                      {/* Animated Laser Line */}
+                      <div className="qr-scan-line" />
+                    </div>
+
+                    {/* Camera Select Dropdown for multiple cameras (e.g., Desktop) */}
+                    {cameras.length > 1 && (
+                      <div className="w-full max-w-[280px] mx-auto">
+                        <select
+                          value={selectedCameraId}
+                          onChange={(e) => setSelectedCameraId(e.target.value)}
+                          className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 bg-slate-50 text-slate-700 outline-none focus:border-primary-500 transition-all font-semibold"
+                        >
+                          {cameras.map(cam => (
+                            <option key={cam.id} value={cam.id}>
+                              {cam.label || `Camera ${cam.id}`}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+
+                    <div className="pt-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQrManualMode(true);
+                          setVerificationInput('');
+                        }}
+                        className="text-xs text-primary-600 hover:text-primary-800 font-bold underline transition-colors"
+                      >
+                        Camera not working? Enter token manually
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   <div>
                     <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">Scan QR Code Token</label>
@@ -2313,24 +2472,42 @@ export default function Attendance() {
                     <p className="text-[10px] text-slate-400 mt-2 text-center">
                       Ensure your QR scanner cursor is focused inside this box.
                     </p>
+                    
+                    <div className="text-center mt-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQrManualMode(false);
+                          setVerificationInput('');
+                        }}
+                        className="text-xs text-primary-600 hover:text-primary-800 font-bold underline transition-colors"
+                      >
+                        Switch back to Camera Scan
+                      </button>
+                    </div>
                   </div>
                 )}
-
+ 
                 <div className="flex gap-2 pt-2">
                   <button
                     type="button"
-                    onClick={() => setVerificationMethod(null)}
+                    onClick={() => {
+                      setVerificationMethod(null);
+                      setQrManualMode(false);
+                    }}
                     className="btn-secondary flex-1 py-3 rounded-2xl font-bold"
                   >
                     Back
                   </button>
-                  <button
-                    type="submit"
-                    disabled={saving}
-                    className="btn-primary flex-1 py-3 rounded-2xl font-bold"
-                  >
-                    Verify & Submit
-                  </button>
+                  {(verificationMethod === 'otp' || qrManualMode) && (
+                    <button
+                      type="submit"
+                      disabled={saving}
+                      className="btn-primary flex-1 py-3 rounded-2xl font-bold"
+                    >
+                      Verify & Submit
+                    </button>
+                  )}
                 </div>
               </form>
             )}

@@ -207,3 +207,20 @@ button:focus-visible {
   animation: digit-drop 0.35s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
   font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
 }
+
+@keyframes qr-scan {
+  0% { top: 6%; }
+  50% { top: 94%; }
+  100% { top: 6%; }
+}
+.qr-scan-line {
+  position: absolute;
+  left: 1rem;
+  right: 1rem;
+  height: 2.5px;
+  background-color: #10b981;
+  box-shadow: 0 0 8px #10b981, 0 0 16px #10b981;
+  animation: qr-scan 2s infinite linear;
+  pointer-events: none;
+  z-index: 10;
+}

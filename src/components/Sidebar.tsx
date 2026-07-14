@@ -17,10 +17,11 @@ import {
   FileText,
   Bike,
   CalendarCheck,
+  Calculator,
   X
 } from 'lucide-react';
 
-type Page = 'dashboard' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
+type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
 
 interface SidebarProps {
   currentPage: string;
@@ -31,6 +32,7 @@ interface SidebarProps {
 
 const menuItems = [
   { id: 'dashboard', label: 'Dashboard', icon: Home },
+  { id: 'accounts', label: 'Accounts', icon: Calculator },
   { id: 'billing', label: 'New Bill', icon: Receipt },
   { id: 'services', label: 'Services', icon: Wrench },
   { id: 'service_bill', label: 'Service Bill', icon: FileText },

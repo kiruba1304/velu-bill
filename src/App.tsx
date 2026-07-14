@@ -15,6 +15,7 @@ import OnlineOrders from './pages/OnlineOrders';
 import Services from './pages/Services';
 import ServiceBill from './pages/ServiceBill';
 import SaleBike from './pages/SaleBike';
+import Accounts from './pages/Accounts';
 import { useDatabase } from './hooks/useDatabase';
 import { useAuth, AuthProvider } from './hooks/useAuth';
 import { useECommerceIntegration } from './hooks/useECommerceIntegration';
@@ -22,7 +23,7 @@ import Login from './pages/Login';
 import Attendance from './pages/Attendance';
 import { Database, FileText, FileCode, FolderDown, Menu } from 'lucide-react';
 
-type Page = 'dashboard' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
+type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
 
 function AppContent() {
   const { currentUser, allowedPages } = useAuth();
@@ -132,6 +133,8 @@ function AppContent() {
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard onNavigate={setCurrentPage} />;
+      case 'accounts':
+        return <Accounts />;
       case 'products':
         return <Products />;
       case 'categories':
