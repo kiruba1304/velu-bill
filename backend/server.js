@@ -4,7 +4,11 @@ const mysql = require('mysql2/promise');
 const crypto = require('crypto');
 
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'X-Tunnel-Skip-Anti-Phishing-Threshold', 'ngrok-skip-browser-warning']
+}));
 app.use(express.json());
 
 function hashPassword(password) {
@@ -407,6 +411,8 @@ async function initDb() {
   // Add Vehicle fields to Customers table
   await addColumnIfNotExists('Customers', 'vehicleName', 'VARCHAR(255) NULL');
   await addColumnIfNotExists('Customers', 'vehicleNumber', 'VARCHAR(50) NULL');
+  await addColumnIfNotExists('Categories', 'allowedRoles', 'TEXT NULL');
+  await addColumnIfNotExists('Categories', 'allowedBranches', 'TEXT NULL');
 
   // Add pricing fields to Bikes table
   await addColumnIfNotExists('Bikes', 'costPrice', 'DECIMAL(12,2) DEFAULT 0.00');
@@ -436,6 +442,26 @@ async function initDb() {
     await pool.query('ALTER TABLE Categories ADD UNIQUE KEY uq_category_name_branch (name, branchId)');
   } catch (err) {
     // Ignore if constraint already exists
+  }
+
+  // Ensure table primary keys are BIGINT to avoid Out of Range values with Date.now() timestamps
+  const tablesToMigrate = [
+    'BillItems',
+    'Bills',
+    'Categories',
+    'Products',
+    'Customers',
+    'Parties',
+    'PartyMovements',
+    'PartyPayments',
+    'InventoryTransactions'
+  ];
+  for (const tableName of tablesToMigrate) {
+    try {
+      await pool.query(`ALTER TABLE \`${tableName}\` MODIFY COLUMN id BIGINT AUTO_INCREMENT`);
+    } catch (err) {
+      // Ignore if column is not auto increment or table doesn't exist yet
+    }
   }
 
   // Seed default branch if empty
@@ -553,12 +579,16 @@ async function initDb() {
   try {
     await pool.query("UPDATE Products SET barcode = NULL WHERE barcode = ''");
     await pool.query("UPDATE Customers SET phone = NULL WHERE phone = ''");
+    // Make all existing products and customers global so they reflect across all branches
+    await pool.query("UPDATE Products SET branchId = NULL");
+    await pool.query("UPDATE Customers SET branchId = NULL");
   } catch (err) {
-    console.error('Failed to normalize unique columns:', err);
+    console.error('Failed to normalize and migrate unique columns:', err);
   }
+
+  
 }
 
-// Rebuild the connection pool after a fatal/timeout error
 async function reconnectPool() {
   if (!dbConfig) throw new Error('DB config not available for reconnect');
   console.log('Reconnecting to database pool...');
@@ -571,6 +601,7 @@ async function reconnectPool() {
 }
 
 // Returns true for errors that mean the connection is dead and we should retry
+
 function isFatalConnectionError(err) {
   if (err && err.fatal) return true;
   const code = err && (err.code || err.errorno || '');
@@ -583,6 +614,69 @@ function isFatalConnectionError(err) {
   ].includes(code);
 }
 
+const KEY_MAPPINGS = {
+  branchid: 'branchId',
+  allowedbranches: 'allowedBranches',
+  customizationenabled: 'customizationEnabled',
+  returnwindowdays: 'returnWindowDays',
+  productcode: 'productCode',
+  costprice: 'costPrice',
+  sellingprice: 'sellingPrice',
+  finalprice: 'finalPrice',
+  hsncode: 'hsnCode',
+  skucode: 'skuCode',
+  categoryname: 'categoryName',
+  credithistory: 'creditHistory',
+  paymentid: 'paymentId',
+  partyid: 'partyId',
+  referenceno: 'referenceNo',
+  createdat: 'createdAt',
+  updatedat: 'updatedAt',
+  billid: 'billId',
+  productid: 'productId',
+  unitprice: 'unitPrice',
+  totalprice: 'totalPrice',
+  productimage: 'productImage',
+  billnumber: 'billNumber',
+  customerid: 'customerId',
+  paymentmethod: 'paymentMethod',
+  receivedamount: 'receivedAmount',
+  changeamount: 'changeAmount',
+  saledate: 'saleDate',
+  customername: 'customerName',
+  customerphone: 'customerPhone',
+  gstnumber: 'gstNumber',
+  sgstamount: 'sgstAmount',
+  cgstamount: 'cgstAmount',
+  totaltax: 'totalTax',
+  subtotal: 'subTotal',
+  serviceid: 'serviceId',
+  bikeid: 'bikeId',
+  servicedate: 'serviceDate',
+  nextservicedate: 'nextServiceDate',
+  remindersent: 'reminderSent'
+};
+
+function normalizeKeys(obj) {
+  if (obj === null || obj === undefined) return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(normalizeKeys);
+  }
+  if (Object.prototype.toString.call(obj) === '[object Object]') {
+    const result = {};
+    for (const [key, val] of Object.entries(obj)) {
+      const normalizedVal = normalizeKeys(val);
+      result[key] = normalizedVal;
+      const mappedKey = KEY_MAPPINGS[key.toLowerCase()];
+      if (mappedKey && mappedKey !== key) {
+        result[mappedKey] = normalizedVal;
+      }
+    }
+    return result;
+  }
+  return obj;
+}
+
 async function executeDbCall(method, args) {
   if (!pool) {
     throw new Error('Database not initialized');
@@ -592,13 +686,15 @@ async function executeDbCall(method, args) {
   const run = () => _executeDbCallInner(method, args);
 
   try {
-    return await run();
+    const res = await run();
+    return normalizeKeys(res);
   } catch (firstErr) {
     if (isFatalConnectionError(firstErr)) {
       console.warn('DB connection lost, attempting pool reconnect before retry...', firstErr.code || firstErr.message);
       try {
         await reconnectPool();
-        return await run(); // single retry on fresh pool
+        const res = await run(); // single retry on fresh pool
+        return normalizeKeys(res);
       } catch (retryErr) {
         console.error('DB retry after reconnect also failed:', retryErr.message);
         throw retryErr;
@@ -626,8 +722,9 @@ async function _executeDbCallInner(method, args) {
   switch (method) {
     case 'getProducts': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM Products WHERE branchId = ? OR branchId IS NULL ORDER BY id ASC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Products ORDER BY id ASC')
+        : await pool.query('SELECT * FROM Products WHERE branchId = ? OR branchId IS NULL ORDER BY id ASC', [branchId || 1]);
       return rows.map(r => ({
         ...r,
         images: parseJsonField(r.images)
@@ -919,9 +1016,7 @@ async function _executeDbCallInner(method, args) {
     }
 
     case 'getCategories': {
-      const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM Categories WHERE branchId = ? ORDER BY id ASC', [targetBranch]);
+      const [rows] = await pool.query('SELECT * FROM Categories ORDER BY id ASC');
       return rows.map(r => ({
         ...r,
         customizationEnabled: !!r.customizationEnabled
@@ -929,15 +1024,14 @@ async function _executeDbCallInner(method, args) {
     }
     case 'createCategory': {
       const [categoryData, branchId] = args;
-      const targetBranch = branchId || 1;
-      const [existing] = await pool.query('SELECT id FROM Categories WHERE LOWER(name) = LOWER(?) AND branchId = ?', [categoryData.name, targetBranch]);
+      const [existing] = await pool.query('SELECT id FROM Categories WHERE LOWER(name) = LOWER(?)', [categoryData.name]);
       if (existing.length > 0) {
         return existing[0].id;
       }
       const now = new Date().toISOString();
       const [res] = await pool.query(
-        `INSERT INTO Categories (name, description, customizationEnabled, returnWindowDays, createdAt, updatedAt, branchId)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO Categories (name, description, customizationEnabled, returnWindowDays, createdAt, updatedAt, branchId, allowedBranches)
+         VALUES (?, ?, ?, ?, ?, ?, NULL, ?)`,
         [
           categoryData.name,
           categoryData.description || '',
@@ -945,7 +1039,7 @@ async function _executeDbCallInner(method, args) {
           categoryData.returnWindowDays ?? null,
           now,
           now,
-          targetBranch
+          categoryData.allowedBranches || null
         ]
       );
       return res.insertId;
@@ -958,7 +1052,7 @@ async function _executeDbCallInner(method, args) {
       for (const [key, val] of Object.entries(updates)) {
         if (key === 'id' || key === 'createdAt' || key === 'updatedAt' || key === 'branchId') continue;
         fields.push(`\`${key}\` = ?`);
-        values.push(val);
+        values.push(typeof val === 'number' && isNaN(val) ? null : val);
       }
       if (fields.length === 0) return true;
       fields.push('`updatedAt` = ?');
@@ -976,8 +1070,9 @@ async function _executeDbCallInner(method, args) {
 
     case 'getCustomers': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM Customers WHERE branchId = ? ORDER BY id ASC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Customers ORDER BY id ASC')
+        : await pool.query('SELECT * FROM Customers WHERE branchId = ? OR branchId IS NULL ORDER BY id ASC', [branchId || 1]);
       return rows.map(r => ({
         ...r,
         creditHistory: parseJsonField(r.creditHistory)
@@ -985,7 +1080,7 @@ async function _executeDbCallInner(method, args) {
     }
     case 'createCustomer': {
       const [customerData, branchId] = args;
-      const targetBranch = branchId || 1;
+      const targetBranch = branchId === undefined ? 1 : branchId;
       const now = new Date().toISOString();
       const [res] = await pool.query(
         `INSERT INTO Customers (name, phone, email, address, creditBalance, creditHistory, createdAt, updatedAt, gstNumber, type, branchId)
@@ -1038,8 +1133,9 @@ async function _executeDbCallInner(method, args) {
 
     case 'getParties': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM Parties WHERE branchId = ? ORDER BY id ASC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Parties ORDER BY id ASC')
+        : await pool.query('SELECT * FROM Parties WHERE branchId = ? ORDER BY id ASC', [branchId || 1]);
       return rows;
     }
     case 'createParty': {
@@ -1091,8 +1187,9 @@ async function _executeDbCallInner(method, args) {
 
     case 'getPartyMovements': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM PartyMovements WHERE branchId = ? ORDER BY id ASC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM PartyMovements ORDER BY id ASC')
+        : await pool.query('SELECT * FROM PartyMovements WHERE branchId = ? ORDER BY id ASC', [branchId || 1]);
       return rows;
     }
     case 'createPartyMovement': {
@@ -1134,8 +1231,9 @@ async function _executeDbCallInner(method, args) {
 
     case 'getPartyPayments': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM PartyPayments WHERE branchId = ? ORDER BY id ASC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM PartyPayments ORDER BY id ASC')
+        : await pool.query('SELECT * FROM PartyPayments WHERE branchId = ? ORDER BY id ASC', [branchId || 1]);
       return rows;
     }
     case 'createPartyPayment': {
@@ -1160,10 +1258,13 @@ async function _executeDbCallInner(method, args) {
 
     case 'getBills': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [bills] = await pool.query('SELECT * FROM Bills WHERE branchId = ? ORDER BY createdAt DESC', [targetBranch]);
+      const [bills] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Bills ORDER BY createdAt DESC')
+        : await pool.query('SELECT * FROM Bills WHERE branchId = ? ORDER BY createdAt DESC', [branchId || 1]);
       const [items] = await pool.query('SELECT * FROM BillItems');
-      const [allCustomers] = await pool.query('SELECT * FROM Customers WHERE branchId = ?', [targetBranch]);
+      const [allCustomers] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Customers')
+        : await pool.query('SELECT * FROM Customers WHERE branchId = ? OR branchId IS NULL', [branchId || 1]);
 
       const customersMap = {};
       for (const c of allCustomers) {
@@ -1287,8 +1388,9 @@ async function _executeDbCallInner(method, args) {
     }
     case 'getBillsByCustomer': {
       const [customerId, branchId] = args;
-      const targetBranch = branchId || 1;
-      const [bills] = await pool.query('SELECT * FROM Bills WHERE customerId = ? AND branchId = ? ORDER BY createdAt DESC', [customerId, targetBranch]);
+      const [bills] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Bills WHERE customerId = ? ORDER BY createdAt DESC', [customerId])
+        : await pool.query('SELECT * FROM Bills WHERE customerId = ? AND branchId = ? ORDER BY createdAt DESC', [customerId, branchId || 1]);
       const [items] = await pool.query('SELECT * FROM BillItems');
       const itemsByBillId = {};
       for (const item of items) {
@@ -1306,8 +1408,9 @@ async function _executeDbCallInner(method, args) {
 
     case 'getTransactions': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM InventoryTransactions WHERE branchId = ? ORDER BY createdAt DESC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM InventoryTransactions ORDER BY createdAt DESC')
+        : await pool.query('SELECT * FROM InventoryTransactions WHERE branchId = ? ORDER BY createdAt DESC', [branchId || 1]);
       return rows;
     }
 
@@ -1431,7 +1534,7 @@ async function _executeDbCallInner(method, args) {
       const hashed = hashPassword(password);
       const [rows] = await pool.query('SELECT id, username, role, name, branchId FROM Users WHERE username = ? AND password = ?', [username, hashed]);
       if (rows.length === 0) {
-        throw new Error('Invalid username or password.');
+        return { error: 'Invalid username or password.' };
       }
       return rows[0];
     }
@@ -1567,8 +1670,9 @@ async function _executeDbCallInner(method, args) {
     }
     case 'getServices': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM Services WHERE branchId = ? ORDER BY id DESC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Services ORDER BY id DESC')
+        : await pool.query('SELECT * FROM Services WHERE branchId = ? ORDER BY id DESC', [branchId || 1]);
       return rows;
     }
     case 'createService': {
@@ -1618,8 +1722,9 @@ async function _executeDbCallInner(method, args) {
     }
     case 'getBikes': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM Bikes WHERE branchId = ? ORDER BY id DESC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM Bikes ORDER BY id DESC')
+        : await pool.query('SELECT * FROM Bikes WHERE branchId = ? ORDER BY id DESC', [branchId || 1]);
       return rows;
     }
     case 'createBike': {
@@ -1677,8 +1782,9 @@ async function _executeDbCallInner(method, args) {
     }
     case 'getBikeServiceReminders': {
       const [branchId] = args;
-      const targetBranch = branchId || 1;
-      const [rows] = await pool.query('SELECT * FROM BikeServiceReminders WHERE branchId = ? ORDER BY id DESC', [targetBranch]);
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM BikeServiceReminders ORDER BY id DESC')
+        : await pool.query('SELECT * FROM BikeServiceReminders WHERE branchId = ? ORDER BY id DESC', [branchId || 1]);
       return rows;
     }
     case 'createBikeServiceReminder': {
