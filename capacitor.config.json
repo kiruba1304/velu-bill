@@ -1,0 +1,6 @@
+{
+  "appId": "com.billpodu.app",
+  "appName": "Bill போடு",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}
