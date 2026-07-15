@@ -630,8 +630,27 @@ export const useCustomers = (branchId?: number) => {
       setLoading(true);
       setError(null);
       await db.waitForInit();
-      const customerList = await db.getCustomers(getTargetBranchId());
-      setCustomers(customerList || []);
+      const currentBranchId = getTargetBranchId();
+      const customerList = await db.getCustomers(currentBranchId);
+      
+      let filteredCustomers = customerList || [];
+      if (currentBranchId !== 0) {
+        try {
+          const branchesList = await db.getBranches();
+          const activeBranch = (branchesList || []).find(b => Number(b.id) === Number(currentBranchId));
+          if (activeBranch) {
+            const activeBranchName = activeBranch.name.trim().toLowerCase();
+            filteredCustomers = (customerList || []).filter(c => {
+              if (!c.allowedBranches) return true; // Visible globally by default
+              const allowed = c.allowedBranches.split(',').map((bName: string) => bName.trim().toLowerCase());
+              return allowed.includes(activeBranchName);
+            });
+          }
+        } catch (e) {
+          console.error('Failed to filter customers based on branch access:', e);
+        }
+      }
+      setCustomers(filteredCustomers);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load customers');
     } finally {

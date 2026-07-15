@@ -65,8 +65,8 @@ const BarcodeManager: React.FC = () => {
     const p = getProductForValue(value);
     if (!p) return null;
     return {
-      mrp: p.sellingPrice ? `Rs. ${Number(p.sellingPrice).toFixed(2)}` : '',
-      ssPrice: p.finalPrice ? `Rs. ${Number(p.finalPrice).toFixed(2)}` : '',
+      mrp: '',
+      ssPrice: p.sellingPrice ? `Rs. ${Number(p.sellingPrice).toFixed(2)}` : '',
       name: p.name
     };
   };

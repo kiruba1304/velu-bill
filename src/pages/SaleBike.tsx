@@ -38,6 +38,18 @@ const SaleBike: React.FC = () => {
   // Catalog tab states
   const [showAddBikeModal, setShowAddBikeModal] = useState(false);
   const [bikeSearch, setBikeSearch] = useState('');
+  const [bikeUnits, setBikeUnits] = useState<Array<{ chassisNumber: string; engineNumber: string }>>([
+    { chassisNumber: '', engineNumber: '' }
+  ]);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+  const toggleExpandGroup = (key: string) => {
+    setExpandedGroups(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
   const [newBike, setNewBike] = useState({
     brand: '',
     modelName: '',
@@ -132,6 +144,7 @@ const SaleBike: React.FC = () => {
   };
 
   // Sales checkout states
+  const [selectedModelKey, setSelectedModelKey] = useState<string>('');
   const [selectedBikeId, setSelectedBikeId] = useState<number | ''>('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
   const [customerSearchQuery, setCustomerSearchQuery] = useState('');
@@ -156,30 +169,40 @@ const SaleBike: React.FC = () => {
   // Handle Add Bike Submit
   const handleAddBikeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBike.brand.trim() || !newBike.modelName.trim() || !newBike.chassisNumber.trim() || !newBike.engineNumber.trim()) {
+    if (!newBike.brand.trim() || !newBike.modelName.trim()) {
       alert('Please fill in all required fields.');
       return;
     }
 
+    const invalidUnit = bikeUnits.find(u => !u.chassisNumber.trim() || !u.engineNumber.trim());
+    if (invalidUnit) {
+      alert('Please enter a chassis and engine number for all showroom units.');
+      return;
+    }
+
     try {
-      await addBike({
-        brand: newBike.brand.trim(),
-        modelName: newBike.modelName.trim(),
-        chassisNumber: newBike.chassisNumber.trim().toUpperCase(),
-        engineNumber: newBike.engineNumber.trim().toUpperCase(),
-        color: newBike.color.trim() || 'N/A',
-        price: parseFloat(newBike.price) || 0.00,
-        costPrice: parseFloat(newBike.costPrice) || 0.00,
-        sellingPrice: parseFloat(newBike.sellingPrice) || 0.00,
-        discountPrice: parseFloat(newBike.discountPrice) || 0.00,
-        discountPercentage: parseFloat(newBike.discountPercentage) || 0.00,
-        gstPercentage: parseFloat(newBike.gstPercentage) || 0.00,
-        showGstInBill: newBike.showGstInBill,
-        finalPrice: parseFloat(newBike.price) || 0.00,
-        status: 'available',
-        soldToCustomerId: null,
-        saleDate: null
-      });
+      let addedCount = 0;
+      for (const unit of bikeUnits) {
+        await addBike({
+          brand: newBike.brand.trim(),
+          modelName: newBike.modelName.trim(),
+          chassisNumber: unit.chassisNumber.trim().toUpperCase(),
+          engineNumber: unit.engineNumber.trim().toUpperCase(),
+          color: newBike.color.trim() || 'N/A',
+          price: parseFloat(newBike.price) || 0.00,
+          costPrice: parseFloat(newBike.costPrice) || 0.00,
+          sellingPrice: parseFloat(newBike.sellingPrice) || 0.00,
+          discountPrice: parseFloat(newBike.discountPrice) || 0.00,
+          discountPercentage: parseFloat(newBike.discountPercentage) || 0.00,
+          gstPercentage: parseFloat(newBike.gstPercentage) || 0.00,
+          showGstInBill: newBike.showGstInBill,
+          finalPrice: parseFloat(newBike.price) || 0.00,
+          status: 'available',
+          soldToCustomerId: null,
+          saleDate: null
+        });
+        addedCount++;
+      }
 
       setNewBike({
         brand: '',
@@ -195,11 +218,12 @@ const SaleBike: React.FC = () => {
         showGstInBill: true,
         price: ''
       });
+      setBikeUnits([{ chassisNumber: '', engineNumber: '' }]);
       setShowAddBikeModal(false);
-      alert('New bike added to catalog!');
+      alert(`Successfully registered ${addedCount} showroom bike(s) to catalog!`);
     } catch (err) {
       console.error(err);
-      alert('Failed to add bike. Ensure chassis/engine numbers are unique.');
+      alert('Failed to add some or all bikes. Ensure chassis/engine numbers are unique and not already registered.');
     }
   };
 
@@ -444,14 +468,64 @@ const SaleBike: React.FC = () => {
     return b ? `${b.brand} ${b.modelName} [Chassis: ${b.chassisNumber}]` : 'Unknown';
   };
 
-  // Filters
   const filteredBikes = bikes.filter(b => 
     b.brand.toLowerCase().includes(bikeSearch.toLowerCase()) ||
     b.modelName.toLowerCase().includes(bikeSearch.toLowerCase()) ||
     b.chassisNumber.toLowerCase().includes(bikeSearch.toLowerCase())
   );
 
-  const availableBikes = bikes.filter(b => b.status === 'available');
+  const groupedBikes = React.useMemo(() => {
+    const groups: { [key: string]: typeof bikes } = {};
+    filteredBikes.forEach(b => {
+      const key = `${b.brand.toLowerCase()}_${b.modelName.toLowerCase()}_${(b.color || '').toLowerCase()}_${b.price}`;
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(b);
+    });
+    return Object.entries(groups).map(([key, list]) => ({
+      key,
+      brand: list[0].brand,
+      modelName: list[0].modelName,
+      color: list[0].color,
+      costPrice: list[0].costPrice,
+      sellingPrice: list[0].sellingPrice,
+      discountPrice: list[0].discountPrice,
+      discountPercentage: list[0].discountPercentage,
+      gstPercentage: list[0].gstPercentage,
+      showGstInBill: list[0].showGstInBill,
+      price: list[0].price,
+      finalPrice: list[0].finalPrice,
+      units: list
+    }));
+  }, [filteredBikes]);
+
+  const availableBikeModels = React.useMemo(() => {
+    const groups: { [key: string]: { brand: string; modelName: string; color: string; price: number; list: typeof bikes } } = {};
+    bikes.filter(b => b.status === 'available').forEach(b => {
+      const key = `${b.brand.toLowerCase()}_${b.modelName.toLowerCase()}_${(b.color || '').toLowerCase()}_${b.price}`;
+      if (!groups[key]) {
+        groups[key] = {
+          brand: b.brand,
+          modelName: b.modelName,
+          color: b.color || 'N/A',
+          price: b.price,
+          list: []
+        };
+      }
+      groups[key].list.push(b);
+    });
+    return Object.entries(groups).map(([key, info]) => ({
+      key,
+      ...info
+    }));
+  }, [bikes]);
+
+  const availableUnitsForSelectedModel = React.useMemo(() => {
+    if (!selectedModelKey) return [];
+    const model = availableBikeModels.find(m => m.key === selectedModelKey);
+    return model ? model.list : [];
+  }, [selectedModelKey, availableBikeModels]);
 
   const filteredReminders = reminders.filter(r => {
     const cust = customers.find(c => c.id === r.customerId);
@@ -545,7 +619,10 @@ const SaleBike: React.FC = () => {
             </div>
             
             <button
-              onClick={() => setShowAddBikeModal(true)}
+              onClick={() => {
+                setBikeUnits([{ chassisNumber: '', engineNumber: '' }]);
+                setShowAddBikeModal(true);
+              }}
               className="btn btn-primary px-4 py-2 text-xs font-bold flex items-center gap-1.5 shadow-md shadow-primary-500/25"
             >
               <Plus className="w-4 h-4" />
@@ -564,85 +641,121 @@ const SaleBike: React.FC = () => {
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {filteredBikes.map(b => (
-                <div key={b.id} className="p-4 bg-slate-50/50 hover:bg-white rounded-2xl border border-slate-150 hover:border-slate-300 transition-all shadow-sm hover:shadow-soft flex flex-col justify-between">
-                  <div>
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="text-[10px] font-bold text-slate-400 uppercase">{b.brand}</span>
-                        <h4 className="font-black text-slate-900 text-sm mt-0.5">{b.modelName}</h4>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold border ${
-                        b.status === 'available'
-                          ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                          : 'bg-indigo-50 text-indigo-700 border-indigo-200'
-                      }`}>
-                        {b.status.toUpperCase()}
-                      </span>
-                    </div>
-
-                    <div className="mt-4 space-y-1.5 border-t border-slate-100 pt-3 text-[11px]">
-                      <div className="flex justify-between text-slate-600">
-                        <span>Chassis No:</span>
-                        <span className="font-mono font-bold text-slate-800">{b.chassisNumber}</span>
-                      </div>
-                      <div className="flex justify-between text-slate-600">
-                        <span>Engine No:</span>
-                        <span className="font-mono font-bold text-slate-800">{b.engineNumber}</span>
-                      </div>
-                      <div className="flex justify-between text-slate-600">
-                        <span>Color:</span>
-                        <span className="font-semibold text-slate-800">{b.color || 'N/A'}</span>
-                      </div>
-                      <div className="flex justify-between text-slate-600 border-t border-slate-50 pt-1.5">
-                        <span>Cost Price:</span>
-                        <span className="font-semibold text-slate-800">₹{(b.costPrice || 0).toFixed(2)}</span>
-                      </div>
-                      <div className="flex justify-between text-slate-600">
-                        <span>Selling Price:</span>
-                        <span className="font-semibold text-slate-800">₹{(b.sellingPrice || 0).toFixed(2)}</span>
-                      </div>
-                      {(b.discountPrice || 0) > 0 && (
-                        <div className="flex justify-between text-slate-600">
-                          <span>Discount:</span>
-                          <span className="font-bold text-emerald-600">-₹{(b.discountPrice || 0).toFixed(2)} ({(b.discountPercentage || 0).toFixed(1)}%)</span>
+              {groupedBikes.map(group => {
+                const totalUnits = group.units.length;
+                const availableUnits = group.units.filter(u => u.status === 'available').length;
+                
+                return (
+                  <div key={group.key} className="p-4 bg-slate-50/50 hover:bg-white rounded-2xl border border-slate-150 hover:border-slate-300 transition-all shadow-sm hover:shadow-soft flex flex-col justify-between">
+                    <div>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <span className="text-[10px] font-bold text-slate-400 uppercase">{group.brand}</span>
+                          <h4 className="font-black text-slate-900 text-sm mt-0.5">{group.modelName}</h4>
                         </div>
-                      )}
-                      <div className="flex justify-between text-slate-600">
-                        <span>GST Option:</span>
-                        <span className="font-semibold text-slate-700">
-                          {(b.gstPercentage || 0)}% {b.showGstInBill ? '(Show in Bill)' : '(Hide)'}
+                        <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold border ${
+                          availableUnits > 0
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                            : 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                        }`}>
+                          {availableUnits > 0 ? `${availableUnits} AVAILABLE` : 'SOLD OUT'}
                         </span>
                       </div>
-                    </div>
-                  </div>
 
-                  <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center">
-                    <div>
-                      <p className="text-[9px] font-bold text-slate-450 uppercase">Final Showroom Price</p>
-                      <p className="font-black text-slate-900 text-base">₹{(b.finalPrice || b.price || 0).toFixed(2)}</p>
+                      <div className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-[11px]">
+                        <div className="flex justify-between text-slate-600">
+                          <span>Color:</span>
+                          <span className="font-semibold text-slate-800">{group.color || 'N/A'}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span>Cost Price:</span>
+                          <span className="font-semibold text-slate-800">₹{(group.costPrice || 0).toFixed(2)}</span>
+                        </div>
+                        <div className="flex justify-between text-slate-600">
+                          <span>Selling Price:</span>
+                          <span className="font-semibold text-slate-800">₹{(group.sellingPrice || 0).toFixed(2)}</span>
+                        </div>
+                        {(group.discountPrice || 0) > 0 && (
+                          <div className="flex justify-between text-slate-600">
+                            <span>Discount:</span>
+                            <span className="font-bold text-emerald-600">-₹{(group.discountPrice || 0).toFixed(2)} ({(group.discountPercentage || 0).toFixed(1)}%)</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between text-slate-600">
+                          <span>GST Option:</span>
+                          <span className="font-semibold text-slate-700">
+                            {(group.gstPercentage || 0)}% {group.showGstInBill ? '(Show in Bill)' : '(Hide)'}
+                          </span>
+                        </div>
+                        
+                        {/* Units list container */}
+                        <div className="space-y-1.5 border-t border-slate-100 pt-2.5">
+                          <button
+                            type="button"
+                            onClick={() => toggleExpandGroup(group.key)}
+                            className="w-full flex justify-between items-center bg-slate-100 hover:bg-slate-200 p-2 rounded-xl text-[10px] font-bold uppercase text-slate-600 transition-colors"
+                          >
+                            <span>Showroom Units ({totalUnits})</span>
+                            <span className="text-primary-600">{expandedGroups[group.key] ? 'Hide Details' : 'Show Details'}</span>
+                          </button>
+                          
+                          {expandedGroups[group.key] && (
+                            <div className="space-y-2 mt-2 max-h-40 overflow-y-auto pr-1">
+                              {group.units.map((unit, uIdx) => (
+                                <div key={unit.id} className="p-2.5 bg-white border border-slate-200 rounded-xl flex flex-col gap-1 relative group/unit">
+                                  <div className="flex justify-between font-mono text-[9px] text-slate-400">
+                                    <span>Unit #{uIdx + 1}</span>
+                                    <span className={`px-1.5 py-0.2 rounded text-[8px] font-bold border ${
+                                      unit.status === 'available'
+                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-250'
+                                        : 'bg-indigo-50 text-indigo-700 border-indigo-250'
+                                    }`}>
+                                      {unit.status.toUpperCase()}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between text-slate-600">
+                                    <span>Chassis:</span>
+                                    <span className="font-mono font-bold text-slate-800">{unit.chassisNumber}</span>
+                                  </div>
+                                  <div className="flex justify-between text-slate-600">
+                                    <span>Engine:</span>
+                                    <span className="font-mono font-bold text-slate-800">{unit.engineNumber}</span>
+                                  </div>
+                                  {unit.status === 'available' && (
+                                    <button
+                                      onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (confirm(`Remove Chassis ${unit.chassisNumber} from catalog?`)) {
+                                          try {
+                                            await deleteBike(unit.id);
+                                          } catch (err) {
+                                            alert('Failed to delete bike.');
+                                          }
+                                        }
+                                      }}
+                                      className="absolute right-2.5 bottom-2.5 text-red-500 hover:text-red-750 p-1 hover:bg-red-55 rounded-lg opacity-0 group-hover/unit:opacity-100 transition-opacity"
+                                      title="Delete Unit"
+                                    >
+                                      <Trash2 className="w-3.5 h-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    {b.status === 'available' && (
-                      <button
-                        onClick={async () => {
-                          if (confirm('Are you sure you want to delete this bike from inventory?')) {
-                            try {
-                              await deleteBike(b.id);
-                              alert('Bike removed.');
-                            } catch (e) {
-                              alert('Failed to delete bike.');
-                            }
-                          }
-                        }}
-                        className="text-red-500 hover:text-red-700 p-1.5 hover:bg-red-50 rounded-lg transition-colors"
-                        title="Delete Bike"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
+
+                    <div className="mt-5 pt-3 border-t border-slate-100 flex justify-between items-center">
+                      <div>
+                        <p className="text-[9px] font-bold text-slate-450 uppercase">Final Showroom Price</p>
+                        <p className="font-black text-slate-900 text-base">₹{(group.finalPrice || group.price || 0).toFixed(2)}</p>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -661,9 +774,9 @@ const SaleBike: React.FC = () => {
             <div className="space-y-3.5">
               {/* Select Customer */}
               <div className="relative">
-                <label className="text-[10px] font-bold text-slate-450 uppercase tracking-wider block mb-1">Customer Account</label>
+                <label className="text-[10px] font-bold text-slate-455 uppercase tracking-wider block mb-1">Customer Account</label>
                 <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-405" />
                   <input
                     type="text"
                     value={customerSearchQuery}
@@ -674,7 +787,7 @@ const SaleBike: React.FC = () => {
                     }}
                     onFocus={() => setShowCustomerDropdown(true)}
                     placeholder="Search existing customer by name or phone..."
-                    className="input pl-9 w-full rounded-xl text-xs"
+                    className="input pl-9 w-full rounded-xl text-xs font-bold text-slate-800"
                   />
                 </div>
                 {/* Customer Dropdown */}
@@ -693,7 +806,7 @@ const SaleBike: React.FC = () => {
                             setCustomerSearchQuery(`${c.name} (${c.phone})`);
                             setShowCustomerDropdown(false);
                           }}
-                          className="p-2 hover:bg-slate-50 rounded-xl cursor-pointer text-xs font-semibold text-slate-800 flex justify-between"
+                          className="p-2 hover:bg-slate-55 rounded-xl cursor-pointer text-xs font-bold text-slate-800 flex justify-between"
                         >
                           <span>{c.name}</span>
                           <span className="text-slate-400 font-mono text-[10px]">{c.phone}</span>
@@ -703,58 +816,89 @@ const SaleBike: React.FC = () => {
                 )}
               </div>
 
-              {/* Select Bike */}
-              <div>
-                <label className="text-[10px] font-bold text-slate-450 uppercase tracking-wider block mb-1">Select Available Bike</label>
-                <select
-                  value={selectedBikeId}
-                  onChange={(e) => handleBikeSelect(Number(e.target.value))}
-                  className="input w-full rounded-xl text-xs cursor-pointer"
-                >
-                  <option value="">-- Choose Showroom Bike --</option>
-                  {availableBikes.map(b => (
-                    <option key={b.id} value={b.id}>
-                      {b.brand} {b.modelName} [Chassis: {b.chassisNumber}] - ₹{b.price.toFixed(2)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Billing Price & Sale Date */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-450 uppercase tracking-wider block mb-1">Finalized Price (₹)</label>
-                  <input
-                    type="number"
-                    value={salePrice}
-                    onChange={(e) => setSalePrice(e.target.value)}
-                    placeholder="Enter sale price"
-                    className="input w-full rounded-xl text-xs font-bold"
-                  />
-                </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-455 uppercase tracking-wider block mb-1">Sale Date</label>
-                  <input
-                    type="date"
-                    value={saleDate}
-                    onChange={(e) => setSaleDate(e.target.value)}
-                    className="input w-full rounded-xl text-xs"
-                  />
-                </div>
-              </div>
+          {/* Select Bike Model & Color */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-bold text-slate-455 uppercase tracking-wider block mb-1">Select Bike Model & Color</label>
+              <select
+                value={selectedModelKey}
+                onChange={(e) => {
+                  setSelectedModelKey(e.target.value);
+                  setSelectedBikeId('');
+                  setSalePrice('');
+                }}
+                className="input w-full rounded-xl text-xs cursor-pointer font-bold text-slate-800"
+              >
+                <option value="">-- Choose Bike Model --</option>
+                {availableBikeModels.map(m => (
+                  <option key={m.key} value={m.key}>
+                    {m.brand} {m.modelName} ({m.color}) - ₹{m.price.toFixed(2)}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <button
-              onClick={handleCompleteSale}
-              disabled={!selectedBikeId || !selectedCustomerId}
-              className="btn btn-primary w-full py-2.5 rounded-xl font-bold shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50 text-xs"
-            >
-              <CheckCircle2 className="w-4 h-4" />
-              Complete Bike Sale & Schedule Maintenance
-            </button>
+            <div>
+              <label className="text-[10px] font-bold text-slate-455 uppercase tracking-wider block mb-1">Select Chassis & Engine No</label>
+              <select
+                value={selectedBikeId}
+                onChange={(e) => {
+                  const bikeId = e.target.value ? Number(e.target.value) : '';
+                  if (bikeId !== '') {
+                    handleBikeSelect(bikeId);
+                  } else {
+                    setSelectedBikeId('');
+                    setSalePrice('');
+                  }
+                }}
+                disabled={!selectedModelKey}
+                className="input w-full rounded-xl text-xs cursor-pointer disabled:opacity-50 font-bold text-slate-800"
+              >
+                <option value="">-- Select Chassis / Engine --</option>
+                {availableUnitsForSelectedModel.map(b => (
+                  <option key={b.id} value={b.id}>
+                    Chassis: {b.chassisNumber} | Engine: {b.engineNumber}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
 
-          {/* Service Intervals Planner */}
+          {/* Billing Price & Sale Date */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-[10px] font-bold text-slate-450 uppercase tracking-wider block mb-1">Finalized Price (₹)</label>
+              <input
+                type="number"
+                value={salePrice}
+                onChange={(e) => setSalePrice(e.target.value)}
+                placeholder="Enter sale price"
+                className="input w-full rounded-xl text-xs font-bold"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-455 uppercase tracking-wider block mb-1">Sale Date</label>
+              <input
+                type="date"
+                value={saleDate}
+                onChange={(e) => setSaleDate(e.target.value)}
+                className="input w-full rounded-xl text-xs"
+              />
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={handleCompleteSale}
+          disabled={!selectedBikeId || !selectedCustomerId}
+          className="btn btn-primary w-full py-2.5 rounded-xl font-bold shadow-md flex items-center justify-center gap-1.5 disabled:opacity-50 text-xs"
+        >
+          <CheckCircle2 className="w-4 h-4" />
+          Complete Bike Sale & Schedule Maintenance
+        </button>
+      </div>
+
+      {/* Service Intervals Planner */}
           <div className="lg:col-span-5 card bg-white border border-slate-200/60 shadow-soft p-5 space-y-4 flex flex-col justify-between">
             <div className="space-y-4">
               <div className="flex justify-between items-center border-b border-slate-100 pb-2">
@@ -979,28 +1123,62 @@ const SaleBike: React.FC = () => {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Chassis Number *</label>
-                  <input
-                    type="text"
-                    value={newBike.chassisNumber}
-                    onChange={(e) => setNewBike({ ...newBike, chassisNumber: e.target.value })}
-                    placeholder="Unique Chassis Code"
-                    className="input w-full text-xs font-mono font-bold"
-                    required
-                  />
+              <div className="border-t border-slate-100 pt-3 space-y-3">
+                <div className="flex justify-between items-center">
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Showroom Units (Chassis & Engine) *</h4>
+                  <button
+                    type="button"
+                    onClick={() => setBikeUnits(prev => [...prev, { chassisNumber: '', engineNumber: '' }])}
+                    className="text-primary-600 hover:text-primary-850 flex items-center gap-1 text-[10px] font-bold"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    Add Unit
+                  </button>
                 </div>
-                <div>
-                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Engine Number *</label>
-                  <input
-                    type="text"
-                    value={newBike.engineNumber}
-                    onChange={(e) => setNewBike({ ...newBike, engineNumber: e.target.value })}
-                    placeholder="Unique Engine Code"
-                    className="input w-full text-xs font-mono font-bold"
-                    required
-                  />
+
+                <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
+                  {bikeUnits.map((unit, idx) => (
+                    <div key={idx} className="flex gap-2 items-center p-2 bg-slate-50 rounded-xl border border-slate-200">
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={unit.chassisNumber}
+                          onChange={(e) => {
+                            const updated = [...bikeUnits];
+                            updated[idx].chassisNumber = e.target.value;
+                            setBikeUnits(updated);
+                          }}
+                          placeholder={`Chassis #${idx + 1}`}
+                          className="input w-full text-[10px] font-mono font-bold py-1.5 px-2"
+                          required
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={unit.engineNumber}
+                          onChange={(e) => {
+                            const updated = [...bikeUnits];
+                            updated[idx].engineNumber = e.target.value;
+                            setBikeUnits(updated);
+                          }}
+                          placeholder={`Engine #${idx + 1}`}
+                          className="input w-full text-[10px] font-mono font-bold py-1.5 px-2"
+                          required
+                        />
+                      </div>
+                      {bikeUnits.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setBikeUnits(prev => prev.filter((_, i) => i !== idx))}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Remove Unit"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 

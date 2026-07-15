@@ -121,16 +121,27 @@ function AppContent() {
     return () => window.removeEventListener('attendance-fullscreen', handleFullscreen);
   }, []);
 
+  useEffect(() => {
+    if (currentUser && allowedPages.length > 0 && !allowedPages.includes(currentPage)) {
+      setCurrentPage(allowedPages[0] as Page);
+    }
+  }, [currentUser, allowedPages, currentPage]);
+
   if (!currentUser) {
     return <Login onLoginSuccess={() => {}} />;
   }
 
   const renderPage = () => {
+    let pageToRender = currentPage;
     if (!allowedPages.includes(currentPage)) {
-      return <Dashboard onNavigate={setCurrentPage} />;
+      if (allowedPages.length > 0) {
+        pageToRender = allowedPages[0] as Page;
+      } else {
+        return <div className="flex h-full items-center justify-center font-semibold text-slate-500">No pages authorized.</div>;
+      }
     }
 
-    switch (currentPage) {
+    switch (pageToRender) {
       case 'dashboard':
         return <Dashboard onNavigate={setCurrentPage} />;
       case 'accounts':

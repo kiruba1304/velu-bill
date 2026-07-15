@@ -18,7 +18,8 @@ import {
   X,
   Upload,
   CheckCircle2,
-  Eye
+  Eye,
+  Percent
 } from 'lucide-react';
 import { Bill, PartyPayment } from '../types';
 
@@ -139,19 +140,22 @@ export const Accounts: React.FC = () => {
   const autoCalculatedMonthly = useMemo(() => {
     const monthlySales: { [month: number]: number } = {};
     const monthlyExpenses: { [month: number]: number } = {};
+    const monthlyGst: { [month: number]: number } = {};
 
     // Initialize all months with 0
     for (let m = 1; m <= 12; m++) {
       monthlySales[m] = 0;
       monthlyExpenses[m] = 0;
+      monthlyGst[m] = 0;
     }
 
-    // Accumulate sales from bills
+    // Accumulate sales and GST from bills
     bills.forEach(bill => {
       const d = parseDateStr(bill.createdAt);
       if (d && d.getFullYear() === selectedYear) {
         const month = d.getMonth() + 1; // 1-indexed
         monthlySales[month] += Number(bill.finalAmount || 0);
+        monthlyGst[month] += Number(bill.totalGst || 0);
       }
     });
 
@@ -164,7 +168,7 @@ export const Accounts: React.FC = () => {
       }
     });
 
-    return { sales: monthlySales, expenses: monthlyExpenses };
+    return { sales: monthlySales, expenses: monthlyExpenses, gst: monthlyGst };
   }, [bills, payments, selectedYear]);
 
   // Handle auto-saving notes on blur
@@ -297,8 +301,10 @@ export const Accounts: React.FC = () => {
     const customExpenses = parseFloat(customData.customExpenses) || 0;
     const autoExpenses = autoCalculatedMonthly.expenses[selectedMonth] || 0;
 
-    const customProfit = customSales - customExpenses;
-    const autoProfit = autoSales - autoExpenses;
+    const totalGst = autoCalculatedMonthly.gst[selectedMonth] || 0;
+
+    const customProfit = customSales - customExpenses - totalGst;
+    const autoProfit = autoSales - autoExpenses - totalGst;
 
     return {
       customSales,
@@ -306,7 +312,8 @@ export const Accounts: React.FC = () => {
       customProfit,
       autoSales,
       autoExpenses,
-      autoProfit
+      autoProfit,
+      totalGst
     };
   }, [gridData, autoCalculatedMonthly, selectedMonth]);
 
@@ -426,7 +433,7 @@ export const Accounts: React.FC = () => {
       </div>
 
       {/* Cards Section */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
         {/* Sales Card */}
         <div 
           onClick={() => setActiveCard('sales')}
@@ -506,6 +513,40 @@ export const Accounts: React.FC = () => {
           </div>
         </div>
 
+        {/* GST Card */}
+        <div 
+          onClick={() => setActiveCard('sales')}
+          className={`card cursor-pointer transition-all duration-300 p-6 border rounded-3xl shadow-soft flex flex-col justify-between relative overflow-hidden group ${
+            activeCard === 'sales' 
+              ? 'border-purple-500 bg-purple-50/70 shadow-lg ring-1 ring-purple-500/30' 
+              : 'border-white/60 bg-white hover:border-slate-300'
+          }`}
+        >
+          <div className="absolute top-0 right-0 p-4 opacity-5 group-hover:opacity-10 transition-opacity pointer-events-none">
+            <Percent className="h-32 w-32 text-purple-900" />
+          </div>
+          <div className="flex justify-between items-start relative z-10">
+            <div className="p-3 bg-purple-500/10 rounded-2xl text-purple-600 border border-purple-500/20">
+              <Percent className="h-6 w-6" />
+            </div>
+            <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full ${
+              activeCard === 'sales' ? 'bg-purple-200/50 text-purple-800' : 'bg-slate-100 text-slate-600'
+            }`}>
+              Collected this month
+            </span>
+          </div>
+          <div className="mt-4 relative z-10">
+            <h3 className="text-sm font-semibold text-slate-500">Monthly GST Collected</h3>
+            <p className="text-3xl font-black text-slate-900 mt-1">₹{summaryTotals.totalGst.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+          </div>
+          <div className="mt-4 pt-3 border-t border-slate-100/50 flex items-center justify-between text-xs font-semibold text-slate-500 relative z-10">
+            <span>Tax collected from bills</span>
+            <span className="flex items-center gap-1 text-purple-600">
+              Auto Calculated
+            </span>
+          </div>
+        </div>
+
         {/* Profit Card */}
         <div 
           onClick={() => setActiveCard('profit')}
@@ -571,7 +612,8 @@ export const Accounts: React.FC = () => {
                   <th className="px-6 py-4 border-r border-slate-200 w-48 text-right bg-blue-50/50 text-blue-900">Incoming Sales (₹)</th>
                   <th className="px-6 py-4 border-r border-slate-200 w-48 text-right bg-amber-50/50 text-amber-900">Custom Expenses (₹)</th>
                   <th className="px-6 py-4 border-r border-slate-200 w-40 text-right text-slate-500">Auto Expenses (₹)</th>
-                  <th className="px-6 py-4 border-r border-slate-200 w-44 text-right">Net Profit (₹)</th>
+                  <th className="px-6 py-4 border-r border-slate-200 w-40 text-right bg-purple-50/50 text-purple-900">GST Collected (₹)</th>
+                  <th className="px-6 py-4 border-r border-slate-200 w-44 text-right bg-emerald-50/50 text-emerald-950">Net Profit (₹)</th>
                   <th className="px-6 py-4 border-r border-slate-200 min-w-[200px]">Notes</th>
                 </tr>
               </thead>
@@ -582,7 +624,8 @@ export const Accounts: React.FC = () => {
                   const autoSalesVal = autoCalculatedMonthly.sales[m] || 0;
                   const customSalesVal = autoSalesVal; // overridden, comes from sales only
                   const customExpensesVal = parseFloat(gridData[m]?.customExpenses) || 0;
-                  const netProfit = customSalesVal - customExpensesVal;
+                  const gstCollectedVal = autoCalculatedMonthly.gst[m] || 0;
+                  const netProfit = customSalesVal - customExpensesVal - gstCollectedVal;
 
                   const autoExpensesVal = autoCalculatedMonthly.expenses[m] || 0;
 
@@ -604,6 +647,11 @@ export const Accounts: React.FC = () => {
                       {/* Auto Expenses Indicator */}
                       <td className="px-6 py-3 border-r border-slate-200 text-right text-slate-500 font-semibold">
                         ₹{autoExpensesVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </td>
+
+                      {/* GST Collected */}
+                      <td className="px-6 py-3 border-r border-slate-200 text-right font-bold text-purple-900 bg-purple-50/5">
+                        ₹{gstCollectedVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </td>
 
                       {/* Net Profit (Spreadsheet Color Coded) */}
@@ -861,6 +909,7 @@ export const Accounts: React.FC = () => {
                   <th className="px-6 py-3.5 text-left">Month</th>
                   <th className="px-6 py-3.5 text-right">Incoming Sales (₹)</th>
                   <th className="px-6 py-3.5 text-right">Expenses Budget (₹)</th>
+                  <th className="px-6 py-3.5 text-right">GST Collected (₹)</th>
                   <th className="px-6 py-3.5 text-right bg-emerald-50/50 text-emerald-950">Net Custom Profit (₹)</th>
                   <th className="px-6 py-3.5 text-right">Auto Profit (₹)</th>
                   <th className="px-6 py-3.5 text-right">Profit Variance (₹)</th>
@@ -872,11 +921,12 @@ export const Accounts: React.FC = () => {
                   const m = selectedMonth;
                   const customSalesVal = autoCalculatedMonthly.sales[m] || 0; // overridden, sales only
                   const customExpensesVal = parseFloat(gridData[m]?.customExpenses) || 0;
-                  const customProfit = customSalesVal - customExpensesVal;
+                  const gstCollectedVal = autoCalculatedMonthly.gst[m] || 0;
+                  const customProfit = customSalesVal - customExpensesVal - gstCollectedVal;
 
                   const autoSalesVal = autoCalculatedMonthly.sales[m] || 0;
                   const autoExpensesVal = autoCalculatedMonthly.expenses[m] || 0;
-                  const autoProfit = autoSalesVal - autoExpensesVal;
+                  const autoProfit = autoSalesVal - autoExpensesVal - gstCollectedVal;
 
                   const variance = customProfit - autoProfit;
                   const margin = customSalesVal > 0 ? (customProfit / customSalesVal) * 100 : 0;
@@ -889,6 +939,9 @@ export const Accounts: React.FC = () => {
                       </td>
                       <td className="px-6 py-4 text-right text-slate-600 font-semibold">
                         ₹{customExpensesVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </td>
+                      <td className="px-6 py-4 text-right text-slate-600 font-semibold">
+                        ₹{gstCollectedVal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </td>
                       <td className={`px-6 py-4 text-right font-extrabold ${
                         customProfit > 0 ? 'bg-emerald-50/50 text-emerald-700' : customProfit < 0 ? 'bg-red-50/50 text-red-700' : 'text-slate-600'

@@ -431,6 +431,7 @@ async function initDb() {
   await addColumnIfNotExists('Products', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Categories', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Customers', 'branchId', 'INT NULL DEFAULT 1');
+  await addColumnIfNotExists('Customers', 'allowedBranches', 'TEXT NULL');
   await addColumnIfNotExists('Bills', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('InventoryTransactions', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Parties', 'branchId', 'INT NULL DEFAULT 1');

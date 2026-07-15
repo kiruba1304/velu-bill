@@ -46,6 +46,7 @@ export interface Customer {
   creditHistory?: CreditTransaction[]; // Transaction history for credit
   vehicleName?: string;
   vehicleNumber?: string;
+  allowedBranches?: string;
   createdAt: string;
   updatedAt: string;
 }

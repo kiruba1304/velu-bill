@@ -228,7 +228,7 @@ export class BarcodeGenerator {
 
       // Layout Calculation
       const centerX = targetWidth / 2;
-      let currentY = 50; // Start Y
+      let currentY = mrp ? 50 : 80; // Start Y (shift down if no MRP to center the content)
 
       // Draw Barcode (Moved to top)
       const barcodeWidth = barcodeCanvas.width;

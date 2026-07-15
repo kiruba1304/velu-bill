@@ -6,7 +6,7 @@ import { useAuth } from '../hooks/useAuth';
 const Settings: React.FC = () => {
   const db = useDatabase();
   const { products } = useProducts();
-  const { customers } = useCustomers();
+  const { customers, updateCustomer } = useCustomers(0);
   const { bills } = useBills();
   const { transactions } = useTransactions();
 
@@ -61,6 +61,10 @@ const Settings: React.FC = () => {
   const { categories, updateCategory } = useCategories(0); // Pass 0 to fetch all categories unfiltered
   const [selectedSettingBranch, setSelectedSettingBranch] = useState<string>('');
   const [branchCategoriesMap, setBranchCategoriesMap] = useState<Record<number, boolean>>({});
+
+  const [selectedCustomerBranch, setSelectedCustomerBranch] = useState<string>('');
+  const [branchCustomersMap, setBranchCustomersMap] = useState<Record<number, boolean>>({});
+  const [customerSearchTerm, setCustomerSearchTerm] = useState<string>('');
 
   useEffect(() => {
     if (branches.length > 0 && !selectedSettingBranch) {
@@ -120,6 +124,73 @@ const Settings: React.FC = () => {
       alert('Branch-based category access settings saved successfully!');
     } catch (e) {
       console.error('Failed to save branch category settings:', e);
+      alert('Failed to save settings. Please try again.');
+    }
+  };
+
+  useEffect(() => {
+    if (branches.length > 0 && !selectedCustomerBranch) {
+      setSelectedCustomerBranch(branches[0].name);
+    }
+  }, [branches]);
+
+  useEffect(() => {
+    if (selectedCustomerBranch) {
+      const map: Record<number, boolean> = {};
+      customers.forEach(c => {
+        const allowed = (c.allowedBranches || '')
+          .split(',')
+          .map(b => b.trim().toLowerCase());
+        map[c.id] = !c.allowedBranches || allowed.includes(selectedCustomerBranch.trim().toLowerCase());
+      });
+      setBranchCustomersMap(map);
+    }
+  }, [selectedCustomerBranch, customers]);
+
+  const saveBranchCustomerAccess = async () => {
+    try {
+      if (!selectedCustomerBranch) {
+        alert('Please select a branch first.');
+        return;
+      }
+
+      for (const customer of customers) {
+        const isAllowedForSelected = !!branchCustomersMap[customer.id];
+        const currentBranches = (customer.allowedBranches || '')
+          .split(',')
+          .map(b => b.trim())
+          .filter(Boolean);
+
+        let updatedBranches;
+
+        let resolvedBranches = currentBranches;
+        if (currentBranches.length === 0 && !customer.allowedBranches) {
+          resolvedBranches = branches.map(b => b.name);
+        }
+
+        const existsInResolved = resolvedBranches.some(b => b.toLowerCase() === selectedCustomerBranch.toLowerCase());
+
+        if (isAllowedForSelected && !existsInResolved) {
+          updatedBranches = [...resolvedBranches, selectedCustomerBranch];
+        } else if (!isAllowedForSelected && existsInResolved) {
+          updatedBranches = resolvedBranches.filter(b => b.toLowerCase() !== selectedCustomerBranch.toLowerCase());
+        } else {
+          continue; // No change needed
+        }
+
+        const allBranchNames = branches.map(b => b.name.toLowerCase());
+        const updatedBranchNamesLower = updatedBranches.map(b => b.toLowerCase());
+        const isAll = allBranchNames.every(name => updatedBranchNamesLower.includes(name));
+
+        const allowedBranchesStr = isAll ? '' : updatedBranches.join(',');
+
+        await updateCustomer(customer.id, {
+          allowedBranches: allowedBranchesStr
+        });
+      }
+      alert('Branch-based customer access settings saved successfully!');
+    } catch (e) {
+      console.error('Failed to save branch customer settings:', e);
       alert('Failed to save settings. Please try again.');
     }
   };
@@ -1621,6 +1692,115 @@ const Settings: React.FC = () => {
               >
                 <Save className="h-4 w-4" />
                 Save Category Access Rules
+              </button>
+            )}
+          </div>
+        )}
+
+        {(isSuperAdmin || isAdmin || isSubAdmin) && (
+          <div className="card border border-white/60 bg-white/85 shadow-soft lg:col-span-2">
+            <div className="flex items-center gap-3 mb-4">
+              <Users className="h-6 w-6 text-primary-600" />
+              <h2 className="text-xl font-semibold text-slate-900">Branch-Based Customer Access Control</h2>
+            </div>
+            <p className="text-sm text-slate-600 mb-6">
+              Configure which customers are visible and accessible in each store branch. Customers who are unchecked will be hidden in that branch.
+            </p>
+
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+              <div className="max-w-xs w-full">
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Select Store Branch</label>
+                <select
+                  value={selectedCustomerBranch}
+                  onChange={(e) => setSelectedCustomerBranch(e.target.value)}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-primary-500 cursor-pointer font-bold"
+                >
+                  {branches.map(b => (
+                    <option key={b.id} value={b.name}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {(isSuperAdmin || isAdmin) && (
+                <div className="flex gap-2 self-end">
+                  <button
+                    onClick={() => {
+                      const newMap = { ...branchCustomersMap };
+                      customers.forEach(c => {
+                        newMap[c.id] = true;
+                      });
+                      setBranchCustomersMap(newMap);
+                    }}
+                    className="btn btn-secondary py-2 px-3 text-xs"
+                  >
+                    Enable for All Customers
+                  </button>
+                  <button
+                    onClick={() => {
+                      const newMap = { ...branchCustomersMap };
+                      customers.forEach(c => {
+                        newMap[c.id] = false;
+                      });
+                      setBranchCustomersMap(newMap);
+                    }}
+                    className="btn btn-secondary py-2 px-3 text-xs"
+                  >
+                    Disable for All Customers
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="mb-4">
+              <input
+                type="text"
+                placeholder="Search customers by name or phone..."
+                value={customerSearchTerm}
+                onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                className="input w-full max-w-sm text-xs"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-6 max-h-60 overflow-y-auto p-2 border border-slate-100 rounded-2xl bg-slate-50/50">
+              {customers.length === 0 ? (
+                <p className="text-sm text-slate-500 italic col-span-full">No customers found.</p>
+              ) : (
+                (() => {
+                  const filtered = customers.filter(c =>
+                    c.name.toLowerCase().includes(customerSearchTerm.toLowerCase()) ||
+                    c.phone.includes(customerSearchTerm)
+                  );
+                  if (filtered.length === 0) {
+                    return <p className="text-sm text-slate-500 italic col-span-full">No matching customers found.</p>;
+                  }
+                  return filtered.map(customer => (
+                    <label key={customer.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={!!branchCustomersMap[customer.id]}
+                        disabled={!isSuperAdmin && !isAdmin}
+                        onChange={() => (isSuperAdmin || isAdmin) && setBranchCustomersMap(prev => ({ ...prev, [customer.id]: !prev[customer.id] }))}
+                        className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 disabled:opacity-60"
+                      />
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-xs font-bold text-slate-800 truncate">{customer.name}</span>
+                        <span className="text-[10px] text-slate-500 font-mono truncate">{customer.phone}</span>
+                      </div>
+                    </label>
+                  ));
+                })()
+              )}
+            </div>
+
+            {(isSuperAdmin || isAdmin) && (
+              <button
+                onClick={saveBranchCustomerAccess}
+                className="btn-primary inline-flex items-center gap-2 px-5 py-2"
+              >
+                <Save className="h-4 w-4" />
+                Save Customer Access Rules
               </button>
             )}
           </div>

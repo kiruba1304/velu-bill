@@ -18,6 +18,7 @@ import {
   Bike,
   CalendarCheck,
   Calculator,
+  RefreshCw,
   X
 } from 'lucide-react';
 
@@ -179,17 +180,26 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, isOpen, onCl
                 <p className="text-[10px] text-slate-400 font-medium">{getRoleLabel(currentUser.role)}</p>
               </div>
             </div>
-            <button
-              onClick={() => {
-                if (window.confirm("Are you sure you want to logout?")) {
-                  logout();
-                }
-              }}
-              className="rounded-xl p-2 text-slate-400 hover:bg-red-500/20 hover:text-red-400 transition-colors"
-              title="Logout"
-            >
-              <LogOut className="h-5 w-5" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => window.location.reload()}
+                className="rounded-xl p-2 text-slate-400 hover:bg-white/10 hover:text-white transition-colors"
+                title="Reload & Sync permissions"
+              >
+                <RefreshCw className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => {
+                  if (window.confirm("Are you sure you want to logout?")) {
+                    logout();
+                  }
+                }}
+                className="rounded-xl p-2 text-slate-400 hover:bg-red-500/20 hover:text-red-400 transition-colors"
+                title="Logout"
+              >
+                <LogOut className="h-5 w-5" />
+              </button>
+            </div>
           </div>
         )}
       </div>
