@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Product, Customer, Bill, BillItem, Service } from '../types';
 import { useProducts, useCustomers, useBills, useServices } from '../hooks/useDatabase';
+import { useAuth } from '../hooks/useAuth';
 import {
   generateQRData,
   generateThermalCompactReceipt,
@@ -27,6 +28,7 @@ interface BillItemWithProduct extends BillItem {
 }
 
 const Billing: React.FC = () => {
+  const { activeBranchId, branches } = useAuth();
   const [billItems, setBillItems] = useState<BillItemWithProduct[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [loadedServiceId, setLoadedServiceId] = useState<number | null>(null);
@@ -309,16 +311,23 @@ const Billing: React.FC = () => {
   const calculateTotals = () => {
     let gstInclusive = false;
     let gstPercentage = 18;
-    try {
-      const raw = localStorage.getItem('app_settings');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        gstInclusive = !!parsed.gstInclusive;
-        if (parsed.gstPercentage !== undefined) {
-          gstPercentage = parseFloat(parsed.gstPercentage) || 0;
+    
+    const activeBranch = branches.find(b => Number(b.id) === Number(activeBranchId));
+    if (activeBranch) {
+      gstInclusive = activeBranch.gstInclusive !== undefined ? !!activeBranch.gstInclusive : false;
+      gstPercentage = activeBranch.gstPercentage !== undefined ? parseFloat(activeBranch.gstPercentage) : 18;
+    } else {
+      try {
+        const raw = localStorage.getItem('app_settings');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          gstInclusive = !!parsed.gstInclusive;
+          if (parsed.gstPercentage !== undefined) {
+            gstPercentage = parseFloat(parsed.gstPercentage) || 0;
+          }
         }
-      }
-    } catch {}
+      } catch {}
+    }
 
     const subtotal = billItems.reduce((sum, item) => sum + item.totalPrice, 0);
     const itemDiscount = billItems.reduce((sum, item) => sum + (item.totalPrice * item.discount / 100), 0);
@@ -479,19 +488,21 @@ const Billing: React.FC = () => {
     const appSettingsRaw = localStorage.getItem('app_settings');
     const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
     
+    const activeBranch = branches.find(b => Number(b.id) === Number(activeBranchId));
+    
     const settings = {
-      storeName: appSettings.storeName || 'SASHVIKA SAREES',
-      upiId: appSettings.upiId || '',
-      bankAccountNumber: appSettings.bankAccountNumber || '',
-      bankIfscCode: appSettings.bankIfscCode || '',
-      accountHolderName: appSettings.accountHolderName || '',
-      address: appSettings.address || '',
-      phone: appSettings.phone || '',
-      gstNumber: appSettings.gstNumber || '',
-      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
-      gstInclusive: appSettings.gstInclusive || false,
-      footerMessage: appSettings.footerMessage || '',
-      logoUrl: appSettings.logoUrl || ''
+      storeName: activeBranch?.name || appSettings.storeName || 'SASHVIKA SAREES',
+      upiId: activeBranch?.upiId || appSettings.upiId || '',
+      bankAccountNumber: activeBranch?.bankAccountNumber || appSettings.bankAccountNumber || '',
+      bankIfscCode: activeBranch?.bankIfscCode || appSettings.bankIfscCode || '',
+      accountHolderName: activeBranch?.accountHolderName || appSettings.accountHolderName || '',
+      address: activeBranch?.address || appSettings.address || '',
+      phone: activeBranch?.phone || appSettings.phone || '',
+      gstNumber: activeBranch?.gst || appSettings.gstNumber || '',
+      showGst: activeBranch?.showGst !== undefined ? !!activeBranch.showGst : (appSettings.showGst !== undefined ? appSettings.showGst : true),
+      gstInclusive: activeBranch?.gstInclusive !== undefined ? !!activeBranch.gstInclusive : (appSettings.gstInclusive || false),
+      footerMessage: activeBranch?.footerMessage || appSettings.footerMessage || '',
+      logoUrl: activeBranch?.logoUrl || appSettings.logoUrl || ''
     };
 
     const qrData = generateQRData(bill, settings);

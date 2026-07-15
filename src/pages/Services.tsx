@@ -18,6 +18,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import { useServices, useCustomers, useBills } from '../hooks/useDatabase';
+import { useAuth } from '../hooks/useAuth';
 import { Service, Bill, BillItem } from '../types';
 import {
   generateQRData,
@@ -58,6 +59,7 @@ const formatIndianVehicleNumber = (val: string) => {
 };
 
 const Services: React.FC = () => {
+  const { activeBranchId, branches } = useAuth();
   const { services, addService, updateService, deleteService, refreshServices, loading } = useServices();
   const { customers } = useCustomers();
   const { addBill } = useBills();
@@ -276,19 +278,22 @@ const Services: React.FC = () => {
     // 1. Fetch store settings
     const appSettingsRaw = localStorage.getItem('app_settings');
     const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
+    
+    const activeBranch = branches.find(b => Number(b.id) === Number(activeBranchId));
+    
     const settings = {
-      storeName: appSettings.storeName || 'SAM SERVICES',
-      upiId: appSettings.upiId || '',
-      bankAccountNumber: appSettings.bankAccountNumber || '',
-      bankIfscCode: appSettings.bankIfscCode || '',
-      accountHolderName: appSettings.accountHolderName || '',
-      address: appSettings.address || '',
-      phone: appSettings.phone || '',
-      gstNumber: appSettings.gstNumber || '',
-      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
-      gstInclusive: appSettings.gstInclusive || false,
-      footerMessage: appSettings.footerMessage || '',
-      logoUrl: appSettings.logoUrl || ''
+      storeName: activeBranch?.name || appSettings.storeName || 'SAM SERVICES',
+      upiId: activeBranch?.upiId || appSettings.upiId || '',
+      bankAccountNumber: activeBranch?.bankAccountNumber || appSettings.bankAccountNumber || '',
+      bankIfscCode: activeBranch?.bankIfscCode || appSettings.bankIfscCode || '',
+      accountHolderName: activeBranch?.accountHolderName || appSettings.accountHolderName || '',
+      address: activeBranch?.address || appSettings.address || '',
+      phone: activeBranch?.phone || appSettings.phone || '',
+      gstNumber: activeBranch?.gst || appSettings.gstNumber || '',
+      showGst: activeBranch?.showGst !== undefined ? !!activeBranch.showGst : (appSettings.showGst !== undefined ? appSettings.showGst : true),
+      gstInclusive: activeBranch?.gstInclusive !== undefined ? !!activeBranch.gstInclusive : (appSettings.gstInclusive || false),
+      footerMessage: activeBranch?.footerMessage || appSettings.footerMessage || '',
+      logoUrl: activeBranch?.logoUrl || appSettings.logoUrl || ''
     };
 
     // 2. Parse description lines to extract spares, labor, and additionals

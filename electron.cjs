@@ -464,6 +464,22 @@ async function initDb() {
   // Add isBilled to Services
   await addColumnIfNotExists('Services', 'isBilled', 'TINYINT DEFAULT 0');
 
+  // Add detailed settings fields to Branches table
+  await addColumnIfNotExists('Branches', 'logoUrl', 'LONGTEXT NULL');
+  try {
+    await pool.query('ALTER TABLE Branches MODIFY COLUMN logoUrl LONGTEXT NULL');
+  } catch (err) {
+    // Ignore error
+  }
+  await addColumnIfNotExists('Branches', 'upiId', 'VARCHAR(255) NULL');
+  await addColumnIfNotExists('Branches', 'bankAccountNumber', 'VARCHAR(255) NULL');
+  await addColumnIfNotExists('Branches', 'bankIfscCode', 'VARCHAR(255) NULL');
+  await addColumnIfNotExists('Branches', 'accountHolderName', 'VARCHAR(255) NULL');
+  await addColumnIfNotExists('Branches', 'showGst', 'TINYINT DEFAULT 1');
+  await addColumnIfNotExists('Branches', 'gstInclusive', 'TINYINT DEFAULT 0');
+  await addColumnIfNotExists('Branches', 'gstPercentage', 'DECIMAL(5,2) DEFAULT 18.00');
+  await addColumnIfNotExists('Branches', 'footerMessage', 'TEXT NULL');
+
   // Migrate RolePermissions branchId column & primary key
   await addColumnIfNotExists('RolePermissions', 'branchId', 'INT NOT NULL DEFAULT 1');
   try {
@@ -978,7 +994,8 @@ apiApp.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'X-Tunnel-Skip-Anti-Phishing-Threshold', 'ngrok-skip-browser-warning']
 }));
-apiApp.use(express.json());
+apiApp.use(express.json({ limit: '50mb' }));
+apiApp.use(express.urlencoded({ limit: '50mb', extended: true }));
 
 apiApp.post('/api/webhooks/orders', (req, res) => {
   if (mainWindow && mainWindow.webContents) {
@@ -2065,7 +2082,7 @@ async function _executeDbCallInner(method, args) {
       }
     }
     case 'getBranches': {
-      const [rows] = await pool.query('SELECT id, name, address, phone, gst, createdAt FROM Branches ORDER BY id ASC');
+      const [rows] = await pool.query('SELECT * FROM Branches ORDER BY id ASC');
       return rows;
     }
     case 'createBranch': {
@@ -2078,12 +2095,20 @@ async function _executeDbCallInner(method, args) {
       return res.insertId;
     }
     case 'updateBranch': {
-      const [id, branchData] = args;
+      const [id, updates] = args;
       const now = new Date().toISOString();
-      const [res] = await pool.query(
-        'UPDATE Branches SET name = ?, address = ?, phone = ?, gst = ?, updatedAt = ? WHERE id = ?',
-        [branchData.name, branchData.address || '', branchData.phone || '', branchData.gst || '', now, id]
-      );
+      const fields = [];
+      const values = [];
+      for (const [key, val] of Object.entries(updates)) {
+        if (key === 'id' || key === 'createdAt' || key === 'updatedAt') continue;
+        fields.push(`\`${key}\` = ?`);
+        values.push(val);
+      }
+      if (fields.length === 0) return true;
+      fields.push('`updatedAt` = ?');
+      values.push(now);
+      values.push(id);
+      const [res] = await pool.query(`UPDATE Branches SET ${fields.join(', ')} WHERE id = ?`, values);
       return res.affectedRows > 0;
     }
     case 'deleteBranch': {

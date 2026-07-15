@@ -418,21 +418,27 @@ const Settings: React.FC = () => {
   };
 
   useEffect(() => {
+    let activeBranch: any = null;
+    if (activeBranchId && branches.length > 0) {
+      activeBranch = branches.find(b => Number(b.id) === Number(activeBranchId));
+    }
+
     try {
       const raw = localStorage.getItem('app_settings');
       const settings = raw ? JSON.parse(raw) : {};
-      setStoreName(settings.storeName || 'SASHVIKA SAREES');
-      setLogoUrl(settings.logoUrl || '');
-      setUpiId(settings.upiId || '');
-      setBankAccountNumber(settings.bankAccountNumber || '');
-      setBankIfscCode(settings.bankIfscCode || '');
-      setAccountHolderName(settings.accountHolderName || '');
-      setAddress(settings.address || '32-F, Near Eswaran Temple, Kadaiveethi, Idappadi – 637101');
-      setPhone(settings.phone || '9965326590, 9047656890');
-      setGstNumber(settings.gstNumber || '');
-      setShowGst(settings.showGst !== undefined ? settings.showGst : true);
-      setGstInclusive(settings.gstInclusive || false);
-      setGstPercentage(settings.gstPercentage !== undefined ? parseFloat(settings.gstPercentage) : 18);
+      
+      setStoreName(activeBranch?.name || settings.storeName || 'SASHVIKA SAREES');
+      setLogoUrl(activeBranch?.logoUrl || settings.logoUrl || '');
+      setUpiId(activeBranch?.upiId || settings.upiId || '');
+      setBankAccountNumber(activeBranch?.bankAccountNumber || settings.bankAccountNumber || '');
+      setBankIfscCode(activeBranch?.bankIfscCode || settings.bankIfscCode || '');
+      setAccountHolderName(activeBranch?.accountHolderName || settings.accountHolderName || '');
+      setAddress(activeBranch?.address || settings.address || '32-F, Near Eswaran Temple, Kadaiveethi, Idappadi – 637101');
+      setPhone(activeBranch?.phone || settings.phone || '9965326590, 9047656890');
+      setGstNumber(activeBranch?.gst || settings.gstNumber || '');
+      setShowGst(activeBranch?.showGst !== undefined ? !!activeBranch.showGst : (settings.showGst !== undefined ? settings.showGst : true));
+      setGstInclusive(activeBranch?.gstInclusive !== undefined ? !!activeBranch.gstInclusive : (settings.gstInclusive || false));
+      setGstPercentage(activeBranch?.gstPercentage !== undefined ? parseFloat(activeBranch.gstPercentage) : (settings.gstPercentage !== undefined ? parseFloat(settings.gstPercentage) : 18));
       setEcommerceApiUrl(settings.ecommerceApiUrl || 'http://localhost:5500/api');
       setEcommerceApiKey(settings.ecommerceApiKey || '');
       setEcommerceSyncInterval(settings.ecommerceSyncInterval !== undefined ? parseInt(settings.ecommerceSyncInterval) : 10);
@@ -448,7 +454,7 @@ const Settings: React.FC = () => {
       setIvrDuration(settings.ivrDuration || '');
       setIvrVoiceNote(settings.ivrVoiceNote || '');
       setIvrTitle(settings.ivrTitle || '');
-      setFooterMessage(settings.footerMessage || 'Thank you for your business!');
+      setFooterMessage(activeBranch?.footerMessage || settings.footerMessage || 'Thank you for your business!');
     } catch { }
     try {
       const dir = localStorage.getItem('backup_directory') || '';
@@ -463,7 +469,7 @@ const Settings: React.FC = () => {
           .catch(() => setPrinters([]));
       }
     } catch { }
-  }, []);
+  }, [branches, activeBranchId]);
 
   const handleReceiptPrinterChange = (name: string) => {
     setSelectedReceiptPrinter(name);
@@ -516,7 +522,7 @@ const Settings: React.FC = () => {
     alert('Synchronization process triggered in background...');
   };
 
-  const saveSettings = () => {
+  const saveSettings = async () => {
     const existingRaw = localStorage.getItem('app_settings');
     const existing = existingRaw ? JSON.parse(existingRaw) : {};
     const next = { 
@@ -551,7 +557,33 @@ const Settings: React.FC = () => {
       footerMessage: footerMessage.trim()
     };
     localStorage.setItem('app_settings', JSON.stringify(next));
-    alert('Settings saved');
+
+    // Save branch-specific settings in database
+    if (activeBranchId) {
+      try {
+        await db.updateBranch(activeBranchId, {
+          name: storeName || 'SASHVIKA SAREES',
+          logoUrl: logoUrl,
+          upiId: upiId.trim(),
+          bankAccountNumber: bankAccountNumber.trim(),
+          bankIfscCode: bankIfscCode.trim(),
+          accountHolderName: accountHolderName.trim(),
+          address: address.trim(),
+          phone: phone.trim(),
+          gst: gstNumber.trim(),
+          showGst: showGst ? 1 : 0,
+          gstInclusive: gstInclusive ? 1 : 0,
+          gstPercentage: gstPercentage,
+          footerMessage: footerMessage.trim()
+        });
+        await refreshBranches();
+      } catch (err: any) {
+        console.error('Failed to update branch-specific DB settings:', err);
+        alert('Failed to save to database: ' + (err.message || String(err)));
+        return;
+      }
+    }
+    alert('Settings saved successfully!');
   };
 
   const downloadCsv = (rows: (string | number)[][], filename: string) => {
