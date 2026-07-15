@@ -92,6 +92,7 @@
     "express": "^5.2.1",
     "html5-qrcode": "^2.3.8",
     "jsbarcode": "^3.12.1",
+    "jspdf": "^4.2.1",
     "lucide-react": "^0.544.0",
     "mysql2": "^3.22.6",
     "postcss": "^8.5.6",

@@ -172,6 +172,7 @@ export interface Service {
   description: string;
   estimatedCost: number;
   status: 'pending' | 'in_progress' | 'completed' | 'cancelled';
+  isBilled?: number;
   branchId?: number;
   createdAt: string;
   updatedAt: string;
@@ -195,6 +196,8 @@ export interface Bike {
   status: 'available' | 'sold';
   soldToCustomerId?: number | null;
   saleDate?: string | null;
+  stockDate?: string | null;
+  batchName?: string | null;
   branchId?: number;
   createdAt: string;
   updatedAt: string;

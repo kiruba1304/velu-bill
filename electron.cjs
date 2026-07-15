@@ -458,6 +458,11 @@ async function initDb() {
   await addColumnIfNotExists('Bikes', 'gstPercentage', 'DECIMAL(5,2) DEFAULT 0.00');
   await addColumnIfNotExists('Bikes', 'showGstInBill', 'BOOLEAN DEFAULT TRUE');
   await addColumnIfNotExists('Bikes', 'finalPrice', 'DECIMAL(12,2) DEFAULT 0.00');
+  await addColumnIfNotExists('Bikes', 'stockDate', 'VARCHAR(255) NULL');
+  await addColumnIfNotExists('Bikes', 'batchName', 'VARCHAR(255) NULL');
+
+  // Add isBilled to Services
+  await addColumnIfNotExists('Services', 'isBilled', 'TINYINT DEFAULT 0');
 
   // Migrate RolePermissions branchId column & primary key
   await addColumnIfNotExists('RolePermissions', 'branchId', 'INT NOT NULL DEFAULT 1');
@@ -1064,9 +1069,11 @@ const KEY_MAPPINGS = {
   bikeid: 'bikeId',
   servicedate: 'serviceDate',
   nextservicedate: 'nextServiceDate',
-  remindersent: 'reminderSent',
   customsales: 'customSales',
-  customexpenses: 'customExpenses'
+  customexpenses: 'customExpenses',
+  stockdate: 'stockDate',
+  batchname: 'batchName',
+  isbilled: 'isBilled'
 };
 
 function normalizeKeys(obj) {
@@ -2148,8 +2155,8 @@ async function _executeDbCallInner(method, args) {
       const targetBranch = branchId || 1;
       const now = new Date().toISOString();
       const [res] = await pool.query(
-        `INSERT INTO Bikes (brand, modelName, chassisNumber, engineNumber, color, price, costPrice, sellingPrice, discountPrice, discountPercentage, gstPercentage, showGstInBill, finalPrice, status, soldToCustomerId, saleDate, branchId, createdAt, updatedAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO Bikes (brand, modelName, chassisNumber, engineNumber, color, price, costPrice, sellingPrice, discountPrice, discountPercentage, gstPercentage, showGstInBill, finalPrice, status, soldToCustomerId, saleDate, branchId, createdAt, updatedAt, stockDate, batchName)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           bikeData.brand,
           bikeData.modelName,
@@ -2169,7 +2176,9 @@ async function _executeDbCallInner(method, args) {
           bikeData.saleDate || null,
           targetBranch,
           now,
-          now
+          now,
+          bikeData.stockDate || null,
+          bikeData.batchName || null
         ]
       );
       return res.insertId;

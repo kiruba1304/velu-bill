@@ -12,14 +12,30 @@ import {
   BadgeAlert,
   Sparkles,
   Info,
-  PhoneCall
+  PhoneCall,
+  ChevronDown,
+  ChevronRight,
+  Pencil,
+  Printer,
+  Download
 } from 'lucide-react';
 import { 
   useBikes, 
   useBikeServiceReminders, 
-  useCustomers 
+  useCustomers,
+  useBills
 } from '../hooks/useDatabase';
-import { BikeServiceReminder } from '../types';
+import { BikeServiceReminder, Bill } from '../types';
+import {
+  generateQRData,
+  generateThermalCompactReceipt,
+  generateThermalStandardReceipt,
+  generateThermalDetailedReceipt,
+  generateRegularA5Receipt,
+  generateRegularA4Receipt,
+  generateRegularA4DetailedReceipt
+} from '../utils/templateGenerator';
+import { jsPDF } from 'jspdf';
 
 const addDays = (dateStr: string, days: number): string => {
   const d = new Date(dateStr);
@@ -30,8 +46,9 @@ const addDays = (dateStr: string, days: number): string => {
 
 const SaleBike: React.FC = () => {
   const { bikes, addBike, updateBike, deleteBike, loading: bikesLoading } = useBikes();
-  const { reminders, addReminder, updateReminder, loading: remindersLoading } = useBikeServiceReminders();
-  const { customers } = useCustomers();
+  const { reminders, addReminder, updateReminder, deleteReminder, loading: remindersLoading } = useBikeServiceReminders();
+  const { customers, updateCustomer } = useCustomers();
+  const { addBill } = useBills();
 
   const [activeTab, setActiveTab] = useState<'catalog' | 'sales' | 'reminders'>('catalog');
 
@@ -62,7 +79,9 @@ const SaleBike: React.FC = () => {
     discountPercentage: '',
     gstPercentage: '',
     showGstInBill: true,
-    price: '' // calculated finalPrice
+    price: '', // calculated finalPrice
+    stockDate: new Date().toISOString().split('T')[0],
+    batchName: ''
   });
 
   const calculateFinalPrice = (
@@ -151,6 +170,7 @@ const SaleBike: React.FC = () => {
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
   const [salePrice, setSalePrice] = useState<string>('');
   const [saleDate, setSaleDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [paymentMethod, setPaymentMethod] = useState<'cash' | 'card' | 'upi' | 'credit' | 'other'>('cash');
   
   // Custom Maintenance intervals
   const [serviceIntervals, setServiceIntervals] = useState<Array<{ serviceNo: number; days: number }>>([
@@ -165,6 +185,59 @@ const SaleBike: React.FC = () => {
   const [loggingVisit, setLoggingVisit] = useState<BikeServiceReminder | null>(null);
   const [actualVisitDate, setActualVisitDate] = useState(new Date().toISOString().split('T')[0]);
   const [visitNotes, setVisitNotes] = useState('');
+  const [expandedReminderGroups, setExpandedReminderGroups] = useState<Record<number, boolean>>({});
+
+  const toggleExpandReminderGroup = (bikeId: number) => {
+    setExpandedReminderGroups(prev => ({
+      ...prev,
+      [bikeId]: !prev[bikeId]
+    }));
+  };
+
+  const [editingReminder, setEditingReminder] = useState<BikeServiceReminder | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    scheduledDays: 0,
+    scheduledDate: '',
+    reminderDate: '',
+    status: 'pending' as 'pending' | 'overdue' | 'completed',
+    actualVisitDate: '',
+    notes: ''
+  });
+
+  const [editingBike, setEditingBike] = useState<any | null>(null);
+  const [editBikeFormData, setEditBikeFormData] = useState({
+    brand: '',
+    modelName: '',
+    color: '',
+    costPrice: '',
+    sellingPrice: '',
+    discountPrice: '',
+    discountPercentage: '',
+    gstPercentage: '',
+    showGstInBill: true,
+    price: '',
+    chassisNumber: '',
+    engineNumber: '',
+    stockDate: '',
+    batchName: ''
+  });
+
+  const [editingGroup, setEditingGroup] = useState<any | null>(null);
+  const [editGroupFormData, setEditGroupFormData] = useState({
+    brand: '',
+    modelName: '',
+    color: '',
+    costPrice: '',
+    sellingPrice: '',
+    discountPrice: '',
+    discountPercentage: '',
+    gstPercentage: '',
+    showGstInBill: true,
+    price: '',
+    stockDate: '',
+    batchName: ''
+  });
+  const [newGroupUnits, setNewGroupUnits] = useState<Array<{ chassisNumber: string; engineNumber: string }>>([]);
 
   // Handle Add Bike Submit
   const handleAddBikeSubmit = async (e: React.FormEvent) => {
@@ -199,7 +272,9 @@ const SaleBike: React.FC = () => {
           finalPrice: parseFloat(newBike.price) || 0.00,
           status: 'available',
           soldToCustomerId: null,
-          saleDate: null
+          saleDate: null,
+          stockDate: newBike.stockDate || new Date().toISOString().split('T')[0],
+          batchName: newBike.batchName.trim() || 'N/A'
         });
         addedCount++;
       }
@@ -216,7 +291,9 @@ const SaleBike: React.FC = () => {
         discountPercentage: '',
         gstPercentage: '',
         showGstInBill: true,
-        price: ''
+        price: '',
+        stockDate: new Date().toISOString().split('T')[0],
+        batchName: ''
       });
       setBikeUnits([{ chassisNumber: '', engineNumber: '' }]);
       setShowAddBikeModal(false);
@@ -280,6 +357,79 @@ const SaleBike: React.FC = () => {
         price: parseFloat(salePrice)
       });
 
+      // 1.5. Generate a formal Bill Invoice in the database
+      const billNumber = generateBillNumber();
+      const customer = customers.find(c => c.id === Number(selectedCustomerId));
+      // Construct exact ISO timestamp including the user selected sale date
+      const currentTimePart = new Date().toISOString().split('T')[1];
+      const nowIso = new Date(`${saleDate}T${currentTimePart}`).toISOString();
+
+      // Calculate proportional pricing
+      const finalAmount = parseFloat(salePrice) || bike.finalPrice || 0;
+      const ratio = bike.finalPrice > 0 ? (finalAmount / bike.finalPrice) : 1;
+
+      const adjustedSellingPrice = (bike.sellingPrice || 0) * ratio;
+      const adjustedDiscountPrice = (bike.discountPrice || 0) * ratio;
+      const adjustedBasePrice = adjustedSellingPrice - adjustedDiscountPrice;
+      const adjustedGstAmount = bike.showGstInBill ? (adjustedBasePrice * ((bike.gstPercentage || 0) / 100)) : 0;
+
+      const dummyBikeProduct = {
+        id: -888, // dummy ID indicating showroom bike sale product
+        name: `${bike.brand} ${bike.modelName}`,
+        company: `Chassis: ${bike.chassisNumber} | Engine: ${bike.engineNumber}`,
+        count: 1,
+        costPrice: bike.costPrice || 0,
+        sellingPrice: adjustedSellingPrice,
+        discount: bike.discountPercentage || 0,
+        gst: bike.gstPercentage || 0,
+        barcode: `BIKE_${bike.chassisNumber}`,
+        finalPrice: finalAmount,
+        createdAt: nowIso,
+        updatedAt: nowIso
+      };
+
+      const billItem = {
+        id: Date.now(),
+        billId: 0,
+        productId: -888,
+        quantity: 1,
+        unitPrice: adjustedSellingPrice,
+        discount: bike.discountPercentage || 0,
+        gst: bike.showGstInBill ? (bike.gstPercentage || 0) : 0,
+        totalPrice: adjustedSellingPrice, // subtotal before discount/GST
+        product: dummyBikeProduct
+      };
+
+      const tempBill: Bill = {
+        id: 0,
+        customerId: Number(selectedCustomerId),
+        billNumber,
+        totalAmount: adjustedSellingPrice,
+        totalDiscount: adjustedDiscountPrice,
+        totalGst: adjustedGstAmount,
+        finalAmount,
+        paymentMethod,
+        status: 'completed',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        customer: customer || undefined,
+        items: [billItem],
+        isGstBill: bike.showGstInBill,
+      };
+
+      await addBill(tempBill);
+
+      // Update customer credit balance if payment method is credit
+      if (paymentMethod === 'credit' && customer) {
+        const newCreditBalance = (customer.creditBalance || 0) + finalAmount;
+        const transactionHistory = [...(customer.creditHistory || [])];
+        
+        await updateCustomer(customer.id, {
+          creditBalance: newCreditBalance,
+          creditHistory: transactionHistory
+        });
+      }
+
       // 2. Generate and write the entire service schedules to BikeServiceReminders
       let runningDate = saleDate;
       for (const interval of serviceIntervals) {
@@ -303,12 +453,16 @@ const SaleBike: React.FC = () => {
         runningDate = targetDue;
       }
 
+      // Print the Bill Receipt
+      printReceipt(tempBill);
+
       // Reset Form States
       setSelectedBikeId('');
       setSelectedCustomerId('');
       setCustomerSearchQuery('');
       setSalePrice('');
-      alert('Bike sale logged and service maintenance schedule created successfully!');
+      setPaymentMethod('cash');
+      alert('Bike sale logged, invoice bill generated and service schedule created successfully!');
       setActiveTab('reminders');
     } catch (err) {
       console.error(err);
@@ -352,6 +506,527 @@ const SaleBike: React.FC = () => {
     } catch (err) {
       console.error(err);
       alert('Failed to update service record.');
+    }
+  };
+
+  const handleEditReminderSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingReminder) return;
+
+    try {
+      await updateReminder(editingReminder.id, {
+        scheduledDays: editFormData.scheduledDays,
+        scheduledDate: editFormData.scheduledDate,
+        reminderDate: editFormData.reminderDate,
+        status: editFormData.status,
+        actualVisitDate: editFormData.status === 'completed' ? editFormData.actualVisitDate : null,
+        notes: editFormData.status === 'completed' ? editFormData.notes.trim() : ''
+      });
+
+      setEditingReminder(null);
+      alert('Service reminder updated successfully!');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update service reminder.');
+    }
+  };
+
+  const handlePrintReminder = (reminder: BikeServiceReminder) => {
+    const cust = customers.find(c => c.id === reminder.customerId);
+    const bike = bikes.find(b => b.id === reminder.bikeId);
+
+    const customerName = cust?.name || 'Unknown';
+    const customerPhone = cust?.phone || 'N/A';
+    const bikeModel = bike ? `${bike.brand} ${bike.modelName}` : 'Unknown';
+    const chassisNumber = bike?.chassisNumber || 'N/A';
+    const engineNumber = bike?.engineNumber || 'N/A';
+
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Pop-up blocked. Please allow pop-ups to print the visit log.');
+      return;
+    }
+
+    const htmlContent = `
+      <html>
+      <head>
+        <title>Service Receipt - Service #${reminder.serviceNo}</title>
+        <style>
+          body { font-family: system-ui, -apple-system, sans-serif; color: #1e293b; padding: 40px; margin: 0; line-height: 1.5; }
+          .header { text-align: center; border-bottom: 2px solid #e2e8f0; padding-bottom: 20px; margin-bottom: 20px; }
+          .header h1 { font-size: 20px; font-weight: 800; color: #0f172a; margin: 0 0 5px 0; letter-spacing: 0.05em; }
+          .header p { font-size: 11px; color: #64748b; margin: 0; text-transform: uppercase; }
+          .section-title { font-size: 12px; font-weight: 700; text-transform: uppercase; color: #475569; border-bottom: 1px solid #f1f5f9; padding-bottom: 5px; margin: 20px 0 10px 0; }
+          .grid { display: grid; grid-template-cols: 1fr 1fr; gap: 12px; margin-bottom: 10px; }
+          .grid-item { font-size: 11px; }
+          .label { font-weight: 600; color: #64748b; display: inline-block; width: 120px; }
+          .value { font-weight: 700; color: #0f172a; }
+          .notes-box { background-color: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 12px; font-size: 11px; min-height: 60px; margin-top: 5px; white-space: pre-wrap; }
+          .footer { margin-top: 60px; display: grid; grid-template-cols: 1fr 1fr; gap: 50px; text-align: center; font-size: 10px; color: #64748b; }
+          .signature-line { border-top: 1px dashed #cbd5e1; margin-top: 40px; padding-top: 8px; font-weight: 600; text-transform: uppercase; }
+        </style>
+      </head>
+      <body>
+        <div class="header">
+          <h1>MAINTENANCE SERVICE VISIT LOG</h1>
+          <p>Official Bike Service Completion Record</p>
+        </div>
+        
+        <div class="section-title">Customer Information</div>
+        <div class="grid">
+          <div class="grid-item"><span class="label">Customer Name:</span><span class="value">${customerName}</span></div>
+          <div class="grid-item"><span class="label">Phone Number:</span><span class="value">${customerPhone}</span></div>
+        </div>
+
+        <div class="section-title">Vehicle Specifications</div>
+        <div class="grid">
+          <div class="grid-item"><span class="label">Model / Color:</span><span class="value">${bikeModel} (${bike?.color || 'N/A'})</span></div>
+          <div class="grid-item"><span class="label">Chassis No:</span><span class="value">${chassisNumber}</span></div>
+          <div class="grid-item"><span class="label">Engine No:</span><span class="value">${engineNumber}</span></div>
+        </div>
+
+        <div class="section-title">Service Details</div>
+        <div class="grid">
+          <div class="grid-item"><span class="label">Service Iteration:</span><span class="value">Service #${reminder.serviceNo}</span></div>
+          <div class="grid-item"><span class="label">Scheduled Target:</span><span class="value">${reminder.scheduledDays} Days</span></div>
+          <div class="grid-item"><span class="label">Scheduled Date:</span><span class="value">${reminder.scheduledDate}</span></div>
+          <div class="grid-item"><span class="label">Actual Visit Date:</span><span class="value">${reminder.actualVisitDate || 'N/A'}</span></div>
+          <div class="grid-item"><span class="label">Status:</span><span class="value" style="color: #10b981;">COMPLETED</span></div>
+        </div>
+
+        <div class="section-title">Technician Findings & Notes</div>
+        <div class="notes-box">${reminder.notes || 'No notes logged for this service visit.'}</div>
+
+        <div class="footer">
+          <div>
+            <div class="signature-line">Customer Signature</div>
+          </div>
+          <div>
+            <div class="signature-line">Authorized Technician Signature</div>
+          </div>
+        </div>
+        <script>
+          window.print();
+          setTimeout(() => { window.close(); }, 500);
+        </script>
+      </body>
+      </html>
+    `;
+
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  };
+
+  const handleDownloadReminder = (reminder: BikeServiceReminder) => {
+    const cust = customers.find(c => c.id === reminder.customerId);
+    const bike = bikes.find(b => b.id === reminder.bikeId);
+
+    const customerName = cust?.name || 'Unknown';
+    const customerPhone = cust?.phone || 'N/A';
+    const bikeModel = bike ? `${bike.brand} ${bike.modelName}` : 'Unknown';
+    const chassisNumber = bike?.chassisNumber || 'N/A';
+    const engineNumber = bike?.engineNumber || 'N/A';
+
+    const doc = new jsPDF();
+    let y = 20;
+
+    // Header
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(16);
+    doc.text("BIKE MAINTENANCE SERVICE VISIT LOG", 105, y, { align: "center" });
+    y += 6;
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(100, 100, 100);
+    doc.text("Official Bike Service Completion Record", 105, y, { align: "center" });
+    y += 10;
+
+    // Divider Line
+    doc.setDrawColor(226, 232, 240);
+    doc.setLineWidth(0.5);
+    doc.line(15, y, 195, y);
+    y += 10;
+
+    // Reset color
+    doc.setTextColor(30, 41, 59);
+
+    // Helper to print key value pair
+    const addKeyValue = (label: string, value: string, nextY: number, labelX = 15, valueX = 55) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(10);
+      doc.setTextColor(100, 116, 139);
+      doc.text(label, labelX, nextY);
+      doc.setFont("helvetica", "bold");
+      doc.setTextColor(15, 23, 42);
+      doc.text(value, valueX, nextY);
+    };
+
+    // Section title helper
+    const addSectionTitle = (title: string, currentY: number) => {
+      doc.setFont("helvetica", "bold");
+      doc.setFontSize(11);
+      doc.setTextColor(71, 85, 105);
+      doc.text(title.toUpperCase(), 15, currentY);
+      doc.setDrawColor(241, 245, 249);
+      doc.line(15, currentY + 2, 195, currentY + 2);
+      return currentY + 10;
+    };
+
+    // Customer Information Section
+    y = addSectionTitle("Customer Information", y);
+    addKeyValue("Customer Name:", customerName, y);
+    addKeyValue("Phone Number:", customerPhone, y, 110, 145);
+    y += 12;
+
+    // Vehicle Specifications Section
+    y = addSectionTitle("Vehicle Specifications", y);
+    addKeyValue("Model / Color:", `${bikeModel} (${bike?.color || 'N/A'})`, y);
+    y += 8;
+    addKeyValue("Chassis No:", chassisNumber, y);
+    addKeyValue("Engine No:", engineNumber, y, 110, 140);
+    y += 12;
+
+    // Service Details Section
+    y = addSectionTitle("Service Details", y);
+    addKeyValue("Service Iteration:", `Service #${reminder.serviceNo}`, y);
+    addKeyValue("Target Days:", `${reminder.scheduledDays} Days`, y, 110, 140);
+    y += 8;
+    addKeyValue("Scheduled Date:", reminder.scheduledDate, y);
+    addKeyValue("Actual Visit Date:", reminder.actualVisitDate || 'N/A', y, 110, 145);
+    y += 8;
+    addKeyValue("Status:", "COMPLETED", y);
+    y += 12;
+
+    // Technician Findings & Notes Section
+    y = addSectionTitle("Technician Findings & Notes", y);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(10);
+    doc.setTextColor(15, 23, 42);
+    
+    const notesText = reminder.notes || 'No notes logged for this service visit.';
+    const splitNotes = doc.splitTextToSize(notesText, 175);
+    doc.text(splitNotes, 15, y);
+    
+    y += (splitNotes.length * 5) + 15;
+
+    // Signatures Section
+    doc.setDrawColor(203, 213, 225);
+    doc.setLineWidth(0.5);
+
+    // Customer Signature Line
+    doc.line(15, y + 15, 85, y + 15);
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139);
+    doc.text("CUSTOMER SIGNATURE", 50, y + 21, { align: "center" });
+
+    // Technician Signature Line
+    doc.line(125, y + 15, 195, y + 15);
+    doc.text("AUTHORIZED TECHNICIAN", 160, y + 21, { align: "center" });
+
+    // Save Document
+    doc.save(`service_visit_log_${reminder.id}_service_${reminder.serviceNo}.pdf`);
+  };
+
+  const generateBillNumber = () => {
+    const now = new Date();
+    const yyyymmdd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+    const key = `bill_counter_${yyyymmdd}`;
+    let counter = parseInt(localStorage.getItem(key) || '0', 10);
+    counter += 1;
+    localStorage.setItem(key, String(counter));
+    const seq = String(counter).padStart(2, '0');
+    return `${yyyymmdd}-${seq}`;
+  };
+
+  const printReceipt = (bill: Bill) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const appSettingsRaw = localStorage.getItem('app_settings');
+    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
+    
+    const settings = {
+      storeName: appSettings.storeName || 'SASHVIKA SAREES',
+      upiId: appSettings.upiId || '',
+      bankAccountNumber: appSettings.bankAccountNumber || '',
+      bankIfscCode: appSettings.bankIfscCode || '',
+      accountHolderName: appSettings.accountHolderName || '',
+      address: appSettings.address || '',
+      phone: appSettings.phone || '',
+      gstNumber: appSettings.gstNumber || '',
+      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
+      gstInclusive: appSettings.gstInclusive || false,
+      footerMessage: appSettings.footerMessage || '',
+      logoUrl: appSettings.logoUrl || ''
+    };
+
+    const qrData = generateQRData(bill, settings);
+    
+    // Get selected template, default to thermal-standard
+    const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
+
+    let receiptHTML = '';
+
+    switch (selectedTemplate) {
+      case 'thermal-compact':
+        receiptHTML = generateThermalCompactReceipt(bill, settings, qrData);
+        break;
+      case 'thermal-detailed':
+        receiptHTML = generateThermalDetailedReceipt(bill, settings, qrData);
+        break;
+      case 'regular-a5':
+        receiptHTML = generateRegularA5Receipt(bill, settings, qrData);
+        break;
+      case 'regular-a4':
+        receiptHTML = generateRegularA4Receipt(bill, settings, qrData);
+        break;
+      case 'regular-a4-detailed':
+        receiptHTML = generateRegularA4DetailedReceipt(bill, settings, qrData);
+        break;
+      case 'thermal-standard':
+      default:
+        receiptHTML = generateThermalStandardReceipt(bill, settings, qrData);
+    }
+
+    const api = (window as any).electronAPI;
+    if (api?.printHtml) {
+      try { (printWindow as any).close(); } catch { }
+      const selectedReceiptPrinter = localStorage.getItem('receipt_printer_name') || '';
+      api.printHtml(receiptHTML, { deviceName: selectedReceiptPrinter || undefined })
+        .catch((err: any) => {
+          const errMsg = err?.message || String(err);
+          if (errMsg.includes('canceled') || errMsg.includes('cancelled')) {
+            console.log('Print job was canceled by the user.');
+            return;
+          }
+          alert('Print failed: ' + errMsg);
+        });
+      return;
+    }
+
+    (printWindow as any).document.write(receiptHTML);
+    (printWindow as any).document.close();
+  };
+
+  const handleEditBikeSellingPriceChange = (val: string) => {
+    const sellPrice = parseFloat(val) || 0;
+    const discPrice = parseFloat(editBikeFormData.discountPrice) || 0;
+    const discPct = sellPrice > 0 ? ((discPrice / sellPrice) * 100).toFixed(2) : '0';
+    const finalPrice = calculateFinalPrice(val, editBikeFormData.discountPrice, discPct, editBikeFormData.gstPercentage, editBikeFormData.showGstInBill);
+
+    setEditBikeFormData(prev => ({
+      ...prev,
+      sellingPrice: val,
+      discountPercentage: discPct,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditBikeDiscountPriceChange = (val: string) => {
+    const discPrice = parseFloat(val) || 0;
+    const sellPrice = parseFloat(editBikeFormData.sellingPrice) || 0;
+    const discPct = sellPrice > 0 ? ((discPrice / sellPrice) * 100).toFixed(2) : '0';
+    const finalPrice = calculateFinalPrice(editBikeFormData.sellingPrice, val, discPct, editBikeFormData.gstPercentage, editBikeFormData.showGstInBill);
+
+    setEditBikeFormData(prev => ({
+      ...prev,
+      discountPrice: val,
+      discountPercentage: discPct,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditBikeDiscountPercentageChange = (val: string) => {
+    const discPct = parseFloat(val) || 0;
+    const sellPrice = parseFloat(editBikeFormData.sellingPrice) || 0;
+    const discPrice = sellPrice > 0 ? ((discPct / 100) * sellPrice).toFixed(2) : '0';
+    const finalPrice = calculateFinalPrice(editBikeFormData.sellingPrice, discPrice, val, editBikeFormData.gstPercentage, editBikeFormData.showGstInBill);
+
+    setEditBikeFormData(prev => ({
+      ...prev,
+      discountPercentage: val,
+      discountPrice: discPrice,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditBikeGstPercentageChange = (val: string) => {
+    const finalPrice = calculateFinalPrice(editBikeFormData.sellingPrice, editBikeFormData.discountPrice, editBikeFormData.discountPercentage, val, editBikeFormData.showGstInBill);
+
+    setEditBikeFormData(prev => ({
+      ...prev,
+      gstPercentage: val,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditBikeShowGstInBillToggle = (val: boolean) => {
+    const finalPrice = calculateFinalPrice(editBikeFormData.sellingPrice, editBikeFormData.discountPrice, editBikeFormData.discountPercentage, editBikeFormData.gstPercentage, val);
+
+    setEditBikeFormData(prev => ({
+      ...prev,
+      showGstInBill: val,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditBikeSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingBike) return;
+
+    try {
+      await updateBike(editingBike.id, {
+        brand: editBikeFormData.brand.trim(),
+        modelName: editBikeFormData.modelName.trim(),
+        color: editBikeFormData.color.trim() || 'N/A',
+        costPrice: parseFloat(editBikeFormData.costPrice) || 0,
+        sellingPrice: parseFloat(editBikeFormData.sellingPrice) || 0,
+        discountPrice: parseFloat(editBikeFormData.discountPrice) || 0,
+        discountPercentage: parseFloat(editBikeFormData.discountPercentage) || 0,
+        gstPercentage: parseFloat(editBikeFormData.gstPercentage) || 0,
+        showGstInBill: editBikeFormData.showGstInBill,
+        price: parseFloat(editBikeFormData.price) || 0,
+        finalPrice: parseFloat(editBikeFormData.price) || 0,
+        chassisNumber: editBikeFormData.chassisNumber.trim().toUpperCase(),
+        engineNumber: editBikeFormData.engineNumber.trim().toUpperCase()
+      });
+
+      setEditingBike(null);
+      alert('Showroom bike updated successfully!');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update showroom bike. Ensure chassis and engine numbers are unique.');
+    }
+  };
+
+  const handleEditGroupSellingPriceChange = (val: string) => {
+    const sellPrice = parseFloat(val) || 0;
+    const discPrice = parseFloat(editGroupFormData.discountPrice) || 0;
+    const discPct = sellPrice > 0 ? ((discPrice / sellPrice) * 100).toFixed(2) : '0';
+    const finalPrice = calculateFinalPrice(val, editGroupFormData.discountPrice, discPct, editGroupFormData.gstPercentage, editGroupFormData.showGstInBill);
+
+    setEditGroupFormData(prev => ({
+      ...prev,
+      sellingPrice: val,
+      discountPercentage: discPct,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditGroupDiscountPriceChange = (val: string) => {
+    const discPrice = parseFloat(val) || 0;
+    const sellPrice = parseFloat(editGroupFormData.sellingPrice) || 0;
+    const discPct = sellPrice > 0 ? ((discPrice / sellPrice) * 100).toFixed(2) : '0';
+    const finalPrice = calculateFinalPrice(editGroupFormData.sellingPrice, val, discPct, editGroupFormData.gstPercentage, editGroupFormData.showGstInBill);
+
+    setEditGroupFormData(prev => ({
+      ...prev,
+      discountPrice: val,
+      discountPercentage: discPct,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditGroupDiscountPercentageChange = (val: string) => {
+    const discPct = parseFloat(val) || 0;
+    const sellPrice = parseFloat(editGroupFormData.sellingPrice) || 0;
+    const discPrice = sellPrice > 0 ? ((discPct / 100) * sellPrice).toFixed(2) : '0';
+    const finalPrice = calculateFinalPrice(editGroupFormData.sellingPrice, discPrice, val, editGroupFormData.gstPercentage, editGroupFormData.showGstInBill);
+
+    setEditGroupFormData(prev => ({
+      ...prev,
+      discountPercentage: val,
+      discountPrice: discPrice,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditGroupGstPercentageChange = (val: string) => {
+    const finalPrice = calculateFinalPrice(editGroupFormData.sellingPrice, editGroupFormData.discountPrice, editGroupFormData.discountPercentage, val, editGroupFormData.showGstInBill);
+
+    setEditGroupFormData(prev => ({
+      ...prev,
+      gstPercentage: val,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditGroupShowGstInBillToggle = (val: boolean) => {
+    const finalPrice = calculateFinalPrice(editGroupFormData.sellingPrice, editGroupFormData.discountPrice, editGroupFormData.discountPercentage, editGroupFormData.gstPercentage, val);
+
+    setEditGroupFormData(prev => ({
+      ...prev,
+      showGstInBill: val,
+      price: finalPrice.toFixed(2)
+    }));
+  };
+
+  const handleEditGroupSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingGroup) return;
+
+    if (!editGroupFormData.brand.trim() || !editGroupFormData.modelName.trim()) {
+      alert('Please fill in required fields.');
+      return;
+    }
+
+    const invalidUnit = newGroupUnits.find(u => !u.chassisNumber.trim() || !u.engineNumber.trim());
+    if (invalidUnit) {
+      alert('Please enter a chassis and engine number for all restocked units.');
+      return;
+    }
+
+    try {
+      // 1. Update existing units in this group
+      for (const unit of editingGroup.units) {
+        await updateBike(unit.id, {
+          brand: editGroupFormData.brand.trim(),
+          modelName: editGroupFormData.modelName.trim(),
+          color: editGroupFormData.color.trim() || 'N/A',
+          costPrice: parseFloat(editGroupFormData.costPrice) || 0.00,
+          sellingPrice: parseFloat(editGroupFormData.sellingPrice) || 0.00,
+          discountPrice: parseFloat(editGroupFormData.discountPrice) || 0.00,
+          discountPercentage: parseFloat(editGroupFormData.discountPercentage) || 0.00,
+          gstPercentage: parseFloat(editGroupFormData.gstPercentage) || 0.00,
+          showGstInBill: editGroupFormData.showGstInBill,
+          price: parseFloat(editGroupFormData.price) || 0.00,
+          finalPrice: parseFloat(editGroupFormData.price) || 0.00,
+          stockDate: editGroupFormData.stockDate,
+          batchName: editGroupFormData.batchName.trim()
+        });
+      }
+
+      // 2. Add new restocked units
+      for (const unit of newGroupUnits) {
+        await addBike({
+          brand: editGroupFormData.brand.trim(),
+          modelName: editGroupFormData.modelName.trim(),
+          chassisNumber: unit.chassisNumber.trim().toUpperCase(),
+          engineNumber: unit.engineNumber.trim().toUpperCase(),
+          color: editGroupFormData.color.trim() || 'N/A',
+          price: parseFloat(editGroupFormData.price) || 0.00,
+          costPrice: parseFloat(editGroupFormData.costPrice) || 0.00,
+          sellingPrice: parseFloat(editGroupFormData.sellingPrice) || 0.00,
+          discountPrice: parseFloat(editGroupFormData.discountPrice) || 0.00,
+          discountPercentage: parseFloat(editGroupFormData.discountPercentage) || 0.00,
+          gstPercentage: parseFloat(editGroupFormData.gstPercentage) || 0.00,
+          showGstInBill: editGroupFormData.showGstInBill,
+          finalPrice: parseFloat(editGroupFormData.price) || 0.00,
+          status: 'available',
+          soldToCustomerId: null,
+          saleDate: null,
+          stockDate: editGroupFormData.stockDate || new Date().toISOString().split('T')[0],
+          batchName: editGroupFormData.batchName.trim() || 'N/A'
+        });
+      }
+
+      setEditingGroup(null);
+      setNewGroupUnits([]);
+      alert('Showroom model updated and stock units restocked successfully!');
+    } catch (err) {
+      console.error(err);
+      alert('Failed to update showroom model. Ensure chassis/engine numbers are unique and not already registered.');
     }
   };
 
@@ -548,6 +1223,32 @@ const SaleBike: React.FC = () => {
     return true;
   });
 
+  const groupedReminders = React.useMemo(() => {
+    const bikeIds = Array.from(new Set(filteredReminders.map(r => r.bikeId)));
+    
+    return bikeIds.map(bikeId => {
+      const bikeReminders = reminders
+        .filter(r => r.bikeId === bikeId)
+        .sort((a, b) => a.serviceNo - b.serviceNo);
+        
+      const matched = bikeReminders.filter(r => filteredReminders.some(fr => fr.id === r.id));
+      
+      let displayReminder = matched.find(r => r.status === 'pending');
+      if (!displayReminder) {
+        displayReminder = matched[matched.length - 1];
+      }
+      
+      const otherReminders = bikeReminders.filter(r => r.id !== displayReminder?.id);
+      
+      return {
+        bikeId,
+        displayReminder,
+        otherReminders,
+        allReminders: bikeReminders
+      };
+    }).filter(group => group.displayReminder !== undefined);
+  }, [filteredReminders, reminders]);
+
   return (
     <div className="space-y-6">
       {/* Top Banner Header */}
@@ -649,9 +1350,36 @@ const SaleBike: React.FC = () => {
                   <div key={group.key} className="p-4 bg-slate-50/50 hover:bg-white rounded-2xl border border-slate-150 hover:border-slate-300 transition-all shadow-sm hover:shadow-soft flex flex-col justify-between">
                     <div>
                       <div className="flex justify-between items-start">
-                        <div>
-                          <span className="text-[10px] font-bold text-slate-400 uppercase">{group.brand}</span>
-                          <h4 className="font-black text-slate-900 text-sm mt-0.5">{group.modelName}</h4>
+                        <div className="flex items-center gap-2">
+                          <div>
+                            <span className="text-[10px] font-bold text-slate-400 uppercase">{group.brand}</span>
+                            <h4 className="font-black text-slate-900 text-sm mt-0.5">{group.modelName}</h4>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingGroup(group);
+                              setEditGroupFormData({
+                                brand: group.brand,
+                                modelName: group.modelName,
+                                color: group.color || '',
+                                costPrice: String(group.costPrice),
+                                sellingPrice: String(group.sellingPrice),
+                                discountPrice: String(group.discountPrice),
+                                discountPercentage: String(group.discountPercentage),
+                                gstPercentage: String(group.gstPercentage),
+                                showGstInBill: group.showGstInBill,
+                                price: String(group.price),
+                                stockDate: group.units[0]?.stockDate || new Date().toISOString().split('T')[0],
+                                batchName: group.units[0]?.batchName || ''
+                              });
+                              setNewGroupUnits([{ chassisNumber: '', engineNumber: '' }]);
+                            }}
+                            className="p-1 text-slate-400 hover:text-primary-600 hover:bg-slate-100 rounded-xl transition-all"
+                            title="Edit Showroom Model & Add Stock"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
                         </div>
                         <span className={`px-2 py-0.5 rounded-md text-[9px] font-bold border ${
                           availableUnits > 0
@@ -663,6 +1391,19 @@ const SaleBike: React.FC = () => {
                       </div>
 
                       <div className="mt-4 space-y-2 border-t border-slate-100 pt-3 text-[11px]">
+                        <div className="grid grid-cols-2 gap-2 bg-slate-100 p-2 rounded-xl border border-slate-200 mb-2">
+                          <div>
+                            <span className="text-[8px] font-bold text-slate-450 uppercase block">Batch</span>
+                            <span className="font-extrabold text-slate-800">{group.units[0]?.batchName || 'N/A'}</span>
+                          </div>
+                          <div>
+                            <span className="text-[8px] font-bold text-slate-450 uppercase block">Stock Date</span>
+                            <span className="font-extrabold text-slate-800">
+                              {group.units[0]?.stockDate ? new Date(group.units[0].stockDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}
+                            </span>
+                          </div>
+                        </div>
+
                         <div className="flex justify-between text-slate-600">
                           <span>Color:</span>
                           <span className="font-semibold text-slate-800">{group.color || 'N/A'}</span>
@@ -702,16 +1443,65 @@ const SaleBike: React.FC = () => {
                           {expandedGroups[group.key] && (
                             <div className="space-y-2 mt-2 max-h-40 overflow-y-auto pr-1">
                               {group.units.map((unit, uIdx) => (
-                                <div key={unit.id} className="p-2.5 bg-white border border-slate-200 rounded-xl flex flex-col gap-1 relative group/unit">
-                                  <div className="flex justify-between font-mono text-[9px] text-slate-400">
+                                <div key={unit.id} className="p-2.5 bg-white border border-slate-200 rounded-xl flex flex-col gap-1 relative">
+                                  <div className="flex justify-between font-mono text-[9px] text-slate-450 items-center">
                                     <span>Unit #{uIdx + 1}</span>
-                                    <span className={`px-1.5 py-0.2 rounded text-[8px] font-bold border ${
-                                      unit.status === 'available'
-                                        ? 'bg-emerald-50 text-emerald-700 border-emerald-250'
-                                        : 'bg-indigo-50 text-indigo-700 border-indigo-250'
-                                    }`}>
-                                      {unit.status.toUpperCase()}
-                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                      <span className={`px-1.5 py-0.2 rounded text-[8px] font-bold border ${
+                                        unit.status === 'available'
+                                          ? 'bg-emerald-50 text-emerald-700 border-emerald-250'
+                                          : 'bg-indigo-50 text-indigo-700 border-indigo-250'
+                                      }`}>
+                                        {unit.status.toUpperCase()}
+                                      </span>
+                                      {unit.status === 'available' && (
+                                        <div className="flex items-center gap-0.5 ml-1">
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              setEditingBike(unit);
+                                              setEditBikeFormData({
+                                                brand: unit.brand,
+                                                modelName: unit.modelName,
+                                                color: unit.color || '',
+                                                costPrice: String(unit.costPrice),
+                                                sellingPrice: String(unit.sellingPrice),
+                                                discountPrice: String(unit.discountPrice),
+                                                discountPercentage: String(unit.discountPercentage),
+                                                gstPercentage: String(unit.gstPercentage),
+                                                showGstInBill: unit.showGstInBill,
+                                                price: String(unit.price),
+                                                chassisNumber: unit.chassisNumber,
+                                                engineNumber: unit.engineNumber,
+                                                stockDate: unit.stockDate || '',
+                                                batchName: unit.batchName || ''
+                                              });
+                                            }}
+                                            className="p-1 text-slate-500 hover:text-primary-600 hover:bg-slate-100 rounded transition-colors"
+                                            title="Edit Bike Unit"
+                                          >
+                                            <Pencil className="w-3.5 h-3.5" />
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={async (e) => {
+                                              e.stopPropagation();
+                                              if (confirm(`Remove Chassis ${unit.chassisNumber} from catalog?`)) {
+                                                try {
+                                                  await deleteBike(unit.id);
+                                                } catch (err) {
+                                                  alert('Failed to delete bike.');
+                                                }
+                                              }
+                                            }}
+                                            className="p-1 text-slate-500 hover:text-red-655 hover:bg-red-50 rounded transition-colors"
+                                            title="Delete Bike Unit"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
                                   </div>
                                   <div className="flex justify-between text-slate-600">
                                     <span>Chassis:</span>
@@ -721,24 +1511,6 @@ const SaleBike: React.FC = () => {
                                     <span>Engine:</span>
                                     <span className="font-mono font-bold text-slate-800">{unit.engineNumber}</span>
                                   </div>
-                                  {unit.status === 'available' && (
-                                    <button
-                                      onClick={async (e) => {
-                                        e.stopPropagation();
-                                        if (confirm(`Remove Chassis ${unit.chassisNumber} from catalog?`)) {
-                                          try {
-                                            await deleteBike(unit.id);
-                                          } catch (err) {
-                                            alert('Failed to delete bike.');
-                                          }
-                                        }
-                                      }}
-                                      className="absolute right-2.5 bottom-2.5 text-red-500 hover:text-red-750 p-1 hover:bg-red-55 rounded-lg opacity-0 group-hover/unit:opacity-100 transition-opacity"
-                                      title="Delete Unit"
-                                    >
-                                      <Trash2 className="w-3.5 h-3.5" />
-                                    </button>
-                                  )}
                                 </div>
                               ))}
                             </div>
@@ -863,9 +1635,8 @@ const SaleBike: React.FC = () => {
               </select>
             </div>
           </div>
-
-          {/* Billing Price & Sale Date */}
-          <div className="grid grid-cols-2 gap-3">
+                    {/* Billing Price, Sale Date & Payment Method */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <label className="text-[10px] font-bold text-slate-450 uppercase tracking-wider block mb-1">Finalized Price (₹)</label>
               <input
@@ -873,7 +1644,7 @@ const SaleBike: React.FC = () => {
                 value={salePrice}
                 onChange={(e) => setSalePrice(e.target.value)}
                 placeholder="Enter sale price"
-                className="input w-full rounded-xl text-xs font-bold"
+                className="input w-full rounded-xl text-xs font-bold text-primary-700"
               />
             </div>
             <div>
@@ -882,8 +1653,22 @@ const SaleBike: React.FC = () => {
                 type="date"
                 value={saleDate}
                 onChange={(e) => setSaleDate(e.target.value)}
-                className="input w-full rounded-xl text-xs"
+                className="input w-full rounded-xl text-xs font-bold text-slate-800"
               />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold text-slate-455 uppercase tracking-wider block mb-1">Payment Method</label>
+              <select
+                value={paymentMethod}
+                onChange={(e: any) => setPaymentMethod(e.target.value)}
+                className="input w-full rounded-xl text-xs font-bold text-slate-800 cursor-pointer"
+              >
+                <option value="cash">Cash</option>
+                <option value="card">Card</option>
+                <option value="upi">UPI</option>
+                <option value="credit">Credit / Pending</option>
+                <option value="other">Other</option>
+              </select>
             </div>
           </div>
         </div>
@@ -999,7 +1784,7 @@ const SaleBike: React.FC = () => {
           {/* Reminders table/grid */}
           {remindersLoading ? (
             <p className="text-center text-slate-400 text-xs py-8">Loading service reminders...</p>
-          ) : filteredReminders.length === 0 ? (
+          ) : groupedReminders.length === 0 ? (
             <div className="p-8 text-center bg-slate-50 rounded-3xl border border-dashed border-slate-200">
               <Calendar className="w-10 h-10 text-slate-300 mx-auto mb-2" />
               <p className="text-slate-700 font-extrabold text-sm">No Service Reminders Found</p>
@@ -1021,64 +1806,250 @@ const SaleBike: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 font-medium text-slate-800">
-                  {filteredReminders.map(r => {
+                  {groupedReminders.map(group => {
+                    const r = group.displayReminder;
+                    if (!r) return null;
+                    const isExpanded = !!expandedReminderGroups[group.bikeId];
                     const todayStr = new Date().toISOString().split('T')[0];
                     const isOverdue = r.status === 'pending' && todayStr > r.scheduledDate;
 
                     return (
-                      <tr key={r.id} className="hover:bg-slate-50/50">
-                        <td className="p-3 font-semibold">
-                          <p>{getCustomerDetails(r.customerId).split(' (')[0]}</p>
-                          <span className="text-[10px] text-slate-400 font-mono font-bold block">{getCustomerDetails(r.customerId).split(' (')[1]?.replace(')', '') || ''}</span>
-                        </td>
-                        <td className="p-3 truncate max-w-[200px]" title={getBikeDetails(r.bikeId)}>
-                          {getBikeDetails(r.bikeId).split(' [')[0]}
-                          <span className="text-[9px] text-slate-400 font-mono block">Chassis: {getBikeDetails(r.bikeId).split('Chassis: ')[1]?.replace(']', '') || ''}</span>
-                        </td>
-                        <td className="p-3 text-center font-extrabold text-slate-900">
-                          {r.serviceNo}
-                        </td>
-                        <td className="p-3 text-slate-500">{r.scheduledDays} Days</td>
-                        <td className="p-3 font-mono font-bold">{r.scheduledDate}</td>
-                        <td className="p-3 font-mono text-slate-450">{r.reminderDate}</td>
-                        <td className="p-3">
-                          {r.status === 'completed' ? (
-                            <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md font-bold text-[9px] border border-emerald-250">Completed</span>
-                          ) : isOverdue ? (
-                            <span className="px-2 py-0.5 bg-red-50 text-red-700 rounded-md font-bold text-[9px] border border-red-250 flex items-center gap-0.5 w-max animate-pulse">
-                              <BadgeAlert className="w-3 h-3" />
-                              OVERDUE
-                            </span>
-                          ) : (
-                            <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md font-bold text-[9px] border border-amber-250">Pending</span>
-                          )}
-                        </td>
-                        <td className="p-3 font-mono text-slate-700">
-                          {r.actualVisitDate || '-'}
-                        </td>
-                        <td className="p-3 text-right">
-                          {r.status === 'pending' && (
-                            <div className="flex justify-end gap-1.5">
-                              <button
-                                onClick={() => triggerIvrCall(r)}
-                                className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-600 hover:text-white rounded-xl border border-indigo-200/50 hover:border-indigo-600 font-bold transition-all text-[10px] flex items-center gap-1"
-                              >
-                                <PhoneCall className="w-3 h-3" />
-                                IVR Call
-                              </button>
+                      <React.Fragment key={`group-${group.bikeId}`}>
+                        <tr className="hover:bg-slate-50/50">
+                          <td className="p-3 font-semibold">
+                            <div className="flex items-center gap-2.5">
+                              {group.otherReminders.length > 0 && (
+                                <button
+                                  onClick={() => toggleExpandReminderGroup(group.bikeId)}
+                                  className="p-1 hover:bg-slate-100 rounded-lg text-slate-500 hover:text-primary-600 transition-all flex items-center justify-center"
+                                  title={isExpanded ? "Hide Other Services" : "Show All Services"}
+                                >
+                                  {isExpanded ? (
+                                    <ChevronDown className="w-4 h-4 text-primary-500" />
+                                  ) : (
+                                    <ChevronRight className="w-4 h-4" />
+                                  )}
+                                </button>
+                              )}
+                              <div>
+                                <p>{getCustomerDetails(r.customerId).split(' (')[0]}</p>
+                                <span className="text-[10px] text-slate-400 font-mono font-bold block">{getCustomerDetails(r.customerId).split(' (')[1]?.replace(')', '') || ''}</span>
+                              </div>
+                            </div>
+                          </td>
+                          <td className="p-3 truncate max-w-[200px]" title={getBikeDetails(r.bikeId)}>
+                            {getBikeDetails(r.bikeId).split(' [')[0]}
+                            <span className="text-[9px] text-slate-400 font-mono block">Chassis: {getBikeDetails(r.bikeId).split('Chassis: ')[1]?.replace(']', '') || ''}</span>
+                          </td>
+                          <td className="p-3 text-center font-extrabold text-slate-900">
+                            {r.serviceNo}
+                          </td>
+                          <td className="p-3 text-slate-500">{r.scheduledDays} Days</td>
+                          <td className="p-3 font-mono font-bold">{r.scheduledDate}</td>
+                          <td className="p-3 font-mono text-slate-450">{r.reminderDate}</td>
+                          <td className="p-3">
+                            {r.status === 'completed' ? (
+                              <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md font-bold text-[9px] border border-emerald-250">Completed</span>
+                            ) : isOverdue ? (
+                              <span className="px-2 py-0.5 bg-red-50 text-red-700 rounded-md font-bold text-[9px] border border-red-250 flex items-center gap-0.5 w-max animate-pulse">
+                                <BadgeAlert className="w-3 h-3" />
+                                OVERDUE
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md font-bold text-[9px] border border-amber-250">Pending</span>
+                            )}
+                          </td>
+                          <td className="p-3 font-mono text-slate-700">
+                            {r.actualVisitDate || '-'}
+                          </td>
+                          <td className="p-3 text-right">
+                            <div className="flex justify-end items-center gap-1.5">
+                              {r.status === 'pending' && (
+                                <>
+                                  <button
+                                    onClick={() => triggerIvrCall(r)}
+                                    className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-600 hover:text-white rounded-xl border border-indigo-200/50 hover:border-indigo-600 font-bold transition-all text-[10px] flex items-center gap-1"
+                                  >
+                                    <PhoneCall className="w-3 h-3" />
+                                    IVR Call
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setLoggingVisit(r);
+                                      setActualVisitDate(new Date().toISOString().split('T')[0]);
+                                    }}
+                                    className="px-2.5 py-1.5 bg-primary-50 hover:bg-primary-600 text-primary-600 hover:text-white rounded-xl border border-primary-200/50 hover:border-primary-600 font-bold transition-all text-[10px]"
+                                  >
+                                    Log Visit
+                                  </button>
+                                </>
+                              )}
+                              {r.status === 'completed' && (
+                                <>
+                                  <button
+                                    onClick={() => handlePrintReminder(r)}
+                                    className="p-1.5 text-slate-500 hover:text-primary-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                    title="Print Visit Log"
+                                  >
+                                    <Printer className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => handleDownloadReminder(r)}
+                                    className="p-1.5 text-slate-500 hover:text-primary-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                    title="Download Visit Log"
+                                  >
+                                    <Download className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
                               <button
                                 onClick={() => {
-                                  setLoggingVisit(r);
-                                  setActualVisitDate(new Date().toISOString().split('T')[0]);
+                                  setEditingReminder(r);
+                                  setEditFormData({
+                                    scheduledDays: r.scheduledDays,
+                                    scheduledDate: r.scheduledDate,
+                                    reminderDate: r.reminderDate,
+                                    status: r.status,
+                                    actualVisitDate: r.actualVisitDate || new Date().toISOString().split('T')[0],
+                                    notes: r.notes || ''
+                                  });
                                 }}
-                                className="px-2.5 py-1.5 bg-primary-50 hover:bg-primary-600 text-primary-600 hover:text-white rounded-xl border border-primary-200/50 hover:border-primary-600 font-bold transition-all text-[10px]"
+                                className="p-1.5 text-slate-500 hover:text-primary-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                title="Edit Reminder"
                               >
-                                Log Visit
+                                <Pencil className="w-3.5 h-3.5" />
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  if (confirm(`Are you sure you want to delete Service #${r.serviceNo} reminder?`)) {
+                                    try {
+                                      await deleteReminder(r.id);
+                                      alert('Service reminder deleted successfully.');
+                                    } catch (err) {
+                                      alert('Failed to delete service reminder.');
+                                    }
+                                  }
+                                }}
+                                className="p-1.5 text-slate-500 hover:text-red-650 hover:bg-red-50 rounded-lg transition-colors"
+                                title="Delete Reminder"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
                               </button>
                             </div>
-                          )}
-                        </td>
-                      </tr>
+                          </td>
+                        </tr>
+
+                        {isExpanded && group.otherReminders.map(otherR => {
+                          const otherIsOverdue = otherR.status === 'pending' && todayStr > otherR.scheduledDate;
+
+                          return (
+                            <tr key={otherR.id} className="bg-slate-50/40 hover:bg-slate-100/55 transition-colors">
+                              <td className="p-3 border-l-2 border-primary-500/30 pl-8" colSpan={2}>
+                                <div className="text-[10px] font-bold text-slate-400 uppercase flex items-center gap-1.5">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-slate-300"></span>
+                                  Related Service Record
+                                </div>
+                              </td>
+                              <td className="p-3 text-center font-semibold text-slate-600">
+                                {otherR.serviceNo}
+                              </td>
+                              <td className="p-3 text-slate-550">{otherR.scheduledDays} Days</td>
+                              <td className="p-3 font-mono text-slate-600">{otherR.scheduledDate}</td>
+                              <td className="p-3 font-mono text-slate-400">{otherR.reminderDate}</td>
+                              <td className="p-3">
+                                {otherR.status === 'completed' ? (
+                                  <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-md font-bold text-[9px] border border-emerald-250">Completed</span>
+                                ) : otherIsOverdue ? (
+                                  <span className="px-2 py-0.5 bg-red-50 text-red-700 rounded-md font-bold text-[9px] border border-red-250 flex items-center gap-0.5 w-max animate-pulse">
+                                    <BadgeAlert className="w-3 h-3" />
+                                    OVERDUE
+                                  </span>
+                                ) : (
+                                  <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md font-bold text-[9px] border border-amber-250">Pending</span>
+                                )}
+                              </td>
+                              <td className="p-3 font-mono text-slate-600">
+                                {otherR.actualVisitDate || '-'}
+                              </td>
+                              <td className="p-3 text-right">
+                                <div className="flex justify-end items-center gap-1.5">
+                                  {otherR.status === 'pending' && (
+                                    <>
+                                      <button
+                                        onClick={() => triggerIvrCall(otherR)}
+                                        className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-600 hover:text-white rounded-xl border border-indigo-200/50 hover:border-indigo-600 font-bold transition-all text-[10px] flex items-center gap-1"
+                                      >
+                                        <PhoneCall className="w-3 h-3" />
+                                        IVR Call
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          setLoggingVisit(otherR);
+                                          setActualVisitDate(new Date().toISOString().split('T')[0]);
+                                        }}
+                                        className="px-2.5 py-1.5 bg-primary-50 hover:bg-primary-600 text-primary-600 hover:text-white rounded-xl border border-primary-200/50 hover:border-primary-600 font-bold transition-all text-[10px]"
+                                      >
+                                        Log Visit
+                                      </button>
+                                    </>
+                                  )}
+                                  {otherR.status === 'completed' && (
+                                    <>
+                                      <button
+                                        onClick={() => handlePrintReminder(otherR)}
+                                        className="p-1.5 text-slate-500 hover:text-primary-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                        title="Print Visit Log"
+                                      >
+                                        <Printer className="w-3.5 h-3.5" />
+                                      </button>
+                                      <button
+                                        onClick={() => handleDownloadReminder(otherR)}
+                                        className="p-1.5 text-slate-500 hover:text-primary-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                        title="Download Visit Log"
+                                      >
+                                        <Download className="w-3.5 h-3.5" />
+                                      </button>
+                                    </>
+                                  )}
+                                  <button
+                                    onClick={() => {
+                                      setEditingReminder(otherR);
+                                      setEditFormData({
+                                        scheduledDays: otherR.scheduledDays,
+                                        scheduledDate: otherR.scheduledDate,
+                                        reminderDate: otherR.reminderDate,
+                                        status: otherR.status,
+                                        actualVisitDate: otherR.actualVisitDate || new Date().toISOString().split('T')[0],
+                                        notes: otherR.notes || ''
+                                      });
+                                    }}
+                                    className="p-1.5 text-slate-500 hover:text-primary-600 hover:bg-slate-100 rounded-lg transition-colors"
+                                    title="Edit Reminder"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={async () => {
+                                      if (confirm(`Are you sure you want to delete Service #${otherR.serviceNo} reminder?`)) {
+                                        try {
+                                          await deleteReminder(otherR.id);
+                                          alert('Service reminder deleted successfully.');
+                                        } catch (err) {
+                                          alert('Failed to delete service reminder.');
+                                        }
+                                      }
+                                    }}
+                                    className="p-1.5 text-slate-500 hover:text-red-650 hover:bg-red-50 rounded-lg transition-colors"
+                                    title="Delete Reminder"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </React.Fragment>
                     );
                   })}
                 </tbody>
@@ -1179,6 +2150,28 @@ const SaleBike: React.FC = () => {
                       )}
                     </div>
                   ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Stock Date</label>
+                  <input
+                    type="date"
+                    value={newBike.stockDate}
+                    onChange={(e) => setNewBike({ ...newBike, stockDate: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Batch Name (with Year)</label>
+                  <input
+                    type="text"
+                    value={newBike.batchName}
+                    onChange={(e) => setNewBike({ ...newBike, batchName: e.target.value })}
+                    placeholder="e.g. Batch 2026"
+                    className="input w-full text-xs font-semibold"
+                  />
                 </div>
               </div>
 
@@ -1345,6 +2338,540 @@ const SaleBike: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setLoggingVisit(null)}
+                  className="btn btn-secondary flex-1 py-2.5"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Service Reminder Modal */}
+      {editingReminder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm transition-all duration-300 animate-fadeIn p-4">
+          <div className="bg-white rounded-3xl border border-slate-100 p-6 max-w-sm w-full shadow-2xl scale-100 transform transition-all duration-300">
+            <h3 className="text-base font-black text-slate-950 flex items-center gap-2 border-b border-slate-100 pb-3">
+              <Calendar className="w-5 h-5 text-primary-500" />
+              Edit Service Reminder
+            </h3>
+
+            <form onSubmit={handleEditReminderSubmit} className="mt-4 space-y-4">
+              <div>
+                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Bike Description</p>
+                <p className="text-xs font-bold text-slate-800 bg-slate-50 p-2.5 rounded-xl border border-slate-100">{getBikeDetails(editingReminder.bikeId).split(' [')[0]}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Service No</label>
+                  <input
+                    type="number"
+                    value={editingReminder.serviceNo}
+                    disabled
+                    className="input w-full text-xs font-semibold bg-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Target Days</label>
+                  <input
+                    type="number"
+                    value={editFormData.scheduledDays}
+                    onChange={(e) => setEditFormData({ ...editFormData, scheduledDays: parseInt(e.target.value) || 1 })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Due Date *</label>
+                  <input
+                    type="date"
+                    value={editFormData.scheduledDate}
+                    onChange={(e) => setEditFormData({ ...editFormData, scheduledDate: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Alert Date *</label>
+                  <input
+                    type="date"
+                    value={editFormData.reminderDate}
+                    onChange={(e) => setEditFormData({ ...editFormData, reminderDate: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Status</label>
+                <select
+                  value={editFormData.status}
+                  onChange={(e: any) => setEditFormData({ ...editFormData, status: e.target.value })}
+                  className="input w-full text-xs font-semibold"
+                >
+                  <option value="pending">Pending</option>
+                  <option value="overdue">Overdue</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
+
+              {editFormData.status === 'completed' && (
+                <>
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Actual Visit Date *</label>
+                    <input
+                      type="date"
+                      value={editFormData.actualVisitDate}
+                      onChange={(e) => setEditFormData({ ...editFormData, actualVisitDate: e.target.value })}
+                      className="input w-full text-xs font-semibold"
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Visit Notes</label>
+                    <textarea
+                      value={editFormData.notes}
+                      onChange={(e) => setEditFormData({ ...editFormData, notes: e.target.value })}
+                      placeholder="Notes on parts replaced or general checkup findings..."
+                      className="input w-full text-xs rounded-xl h-20"
+                    />
+                  </div>
+                </>
+              )}
+
+              <div className="pt-3 border-t border-slate-100 flex gap-3">
+                <button
+                  type="submit"
+                  className="btn btn-primary flex-1 py-2.5 font-bold flex items-center justify-center gap-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingReminder(null)}
+                  className="btn btn-secondary flex-1 py-2.5"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Showroom Bike Modal */}
+      {editingBike && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm transition-all duration-300 animate-fadeIn p-4">
+          <div className="bg-white rounded-3xl border border-slate-100 p-6 max-w-md w-full shadow-2xl scale-100 transform transition-all duration-300">
+            <h3 className="text-base font-black text-slate-950 flex items-center gap-2 border-b border-slate-100 pb-3">
+              <BikeIcon className="w-5 h-5 text-primary-500" />
+              Edit Showroom Bike Unit
+            </h3>
+
+            <form onSubmit={handleEditBikeSubmit} className="mt-4 space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Brand Name *</label>
+                  <input
+                    type="text"
+                    value={editBikeFormData.brand}
+                    onChange={(e) => setEditBikeFormData({ ...editBikeFormData, brand: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Model Name *</label>
+                  <input
+                    type="text"
+                    value={editBikeFormData.modelName}
+                    onChange={(e) => setEditBikeFormData({ ...editBikeFormData, modelName: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Chassis Number *</label>
+                  <input
+                    type="text"
+                    value={editBikeFormData.chassisNumber}
+                    onChange={(e) => setEditBikeFormData({ ...editBikeFormData, chassisNumber: e.target.value })}
+                    className="input w-full text-xs font-mono font-bold"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Engine Number *</label>
+                  <input
+                    type="text"
+                    value={editBikeFormData.engineNumber}
+                    onChange={(e) => setEditBikeFormData({ ...editBikeFormData, engineNumber: e.target.value })}
+                    className="input w-full text-xs font-mono font-bold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Stock Date</label>
+                  <input
+                    type="date"
+                    value={editBikeFormData.stockDate}
+                    onChange={(e) => setEditBikeFormData({ ...editBikeFormData, stockDate: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Batch Name (with Year)</label>
+                  <input
+                    type="text"
+                    value={editBikeFormData.batchName}
+                    onChange={(e) => setEditBikeFormData({ ...editBikeFormData, batchName: e.target.value })}
+                    placeholder="e.g. Batch 2026"
+                    className="input w-full text-xs font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Color</label>
+                  <input
+                    type="text"
+                    value={editBikeFormData.color}
+                    onChange={(e) => setEditBikeFormData({ ...editBikeFormData, color: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Cost Price (₹) *</label>
+                  <input
+                    type="number"
+                    value={editBikeFormData.costPrice}
+                    onChange={(e) => setEditBikeFormData({ ...editBikeFormData, costPrice: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Selling Price (₹) *</label>
+                  <input
+                    type="number"
+                    value={editBikeFormData.sellingPrice}
+                    onChange={(e) => handleEditBikeSellingPriceChange(e.target.value)}
+                    className="input w-full text-xs font-bold text-primary-700"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Discount Price (₹)</label>
+                  <input
+                    type="number"
+                    value={editBikeFormData.discountPrice}
+                    onChange={(e) => handleEditBikeDiscountPriceChange(e.target.value)}
+                    className="input w-full text-xs font-semibold text-emerald-600"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Discount %</label>
+                  <input
+                    type="number"
+                    value={editBikeFormData.discountPercentage}
+                    onChange={(e) => handleEditBikeDiscountPercentageChange(e.target.value)}
+                    className="input w-full text-xs font-semibold text-emerald-600"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">GST % *</label>
+                  <input
+                    type="number"
+                    value={editBikeFormData.gstPercentage}
+                    onChange={(e) => handleEditBikeGstPercentageChange(e.target.value)}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 items-center pt-2">
+                <label className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-150 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editBikeFormData.showGstInBill}
+                    onChange={(e) => handleEditBikeShowGstInBillToggle(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-350 text-primary-650 focus:ring-primary-500"
+                  />
+                  <span className="text-[9px] font-extrabold text-slate-700 uppercase tracking-wider">GST Show in Bill</span>
+                </label>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Final Price (₹) *</label>
+                  <input
+                    type="text"
+                    value={editBikeFormData.price}
+                    readOnly
+                    className="input w-full text-xs font-black bg-slate-100/80 text-slate-800 border-slate-300"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex gap-3">
+                <button
+                  type="submit"
+                  className="btn btn-primary flex-1 py-2.5 font-bold flex items-center justify-center gap-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  Save Changes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setEditingBike(null)}
+                  className="btn btn-secondary flex-1 py-2.5"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Showroom Model & Add Stock Modal */}
+      {editingGroup && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm transition-all duration-300 animate-fadeIn p-4">
+          <div className="bg-white rounded-3xl border border-slate-100 p-6 max-w-md w-full shadow-2xl scale-100 transform transition-all duration-300">
+            <h3 className="text-base font-black text-slate-950 flex items-center gap-2 border-b border-slate-100 pb-3">
+              <BikeIcon className="w-5 h-5 text-primary-500" />
+              Edit Model & Restock Units
+            </h3>
+
+            <form onSubmit={handleEditGroupSubmit} className="mt-4 space-y-4 max-h-[75vh] overflow-y-auto pr-1">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Brand Name *</label>
+                  <input
+                    type="text"
+                    value={editGroupFormData.brand}
+                    onChange={(e) => setEditGroupFormData({ ...editGroupFormData, brand: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Model Name *</label>
+                  <input
+                    type="text"
+                    value={editGroupFormData.modelName}
+                    onChange={(e) => setEditGroupFormData({ ...editGroupFormData, modelName: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Stock Date</label>
+                  <input
+                    type="date"
+                    value={editGroupFormData.stockDate}
+                    onChange={(e) => setEditGroupFormData({ ...editGroupFormData, stockDate: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Batch Name (with Year)</label>
+                  <input
+                    type="text"
+                    value={editGroupFormData.batchName}
+                    onChange={(e) => setEditGroupFormData({ ...editGroupFormData, batchName: e.target.value })}
+                    placeholder="e.g. Batch 2026"
+                    className="input w-full text-xs font-semibold"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Color</label>
+                  <input
+                    type="text"
+                    value={editGroupFormData.color}
+                    onChange={(e) => setEditGroupFormData({ ...editGroupFormData, color: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Cost Price (₹) *</label>
+                  <input
+                    type="number"
+                    value={editGroupFormData.costPrice}
+                    onChange={(e) => setEditGroupFormData({ ...editGroupFormData, costPrice: e.target.value })}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Selling Price (₹) *</label>
+                  <input
+                    type="number"
+                    value={editGroupFormData.sellingPrice}
+                    onChange={(e) => handleEditGroupSellingPriceChange(e.target.value)}
+                    className="input w-full text-xs font-bold text-primary-700"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Discount Price (₹)</label>
+                  <input
+                    type="number"
+                    value={editGroupFormData.discountPrice}
+                    onChange={(e) => handleEditGroupDiscountPriceChange(e.target.value)}
+                    className="input w-full text-xs font-semibold text-emerald-600"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Discount %</label>
+                  <input
+                    type="number"
+                    value={editGroupFormData.discountPercentage}
+                    onChange={(e) => handleEditGroupDiscountPercentageChange(e.target.value)}
+                    className="input w-full text-xs font-semibold text-emerald-600"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">GST % *</label>
+                  <input
+                    type="number"
+                    value={editGroupFormData.gstPercentage}
+                    onChange={(e) => handleEditGroupGstPercentageChange(e.target.value)}
+                    className="input w-full text-xs font-semibold"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3 items-center pt-2">
+                <label className="flex items-center gap-2 p-2 rounded-xl bg-slate-50 border border-slate-150 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={editGroupFormData.showGstInBill}
+                    onChange={(e) => handleEditGroupShowGstInBillToggle(e.target.checked)}
+                    className="h-4 w-4 rounded border-slate-350 text-primary-650 focus:ring-primary-500"
+                  />
+                  <span className="text-[9px] font-extrabold text-slate-700 uppercase tracking-wider">GST Show in Bill</span>
+                </label>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Final Price (₹) *</label>
+                  <input
+                    type="text"
+                    value={editGroupFormData.price}
+                    readOnly
+                    className="input w-full text-xs font-black bg-slate-100/80 text-slate-800 border-slate-300"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Add New restocked Units section */}
+              <div className="border-t border-slate-100 pt-3 space-y-3">
+                <div className="flex justify-between items-center">
+                  <h4 className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Restock Showroom Units (New Chassis & Engine)</h4>
+                  <button
+                    type="button"
+                    onClick={() => setNewGroupUnits(prev => [...prev, { chassisNumber: '', engineNumber: '' }])}
+                    className="text-primary-600 hover:text-primary-850 flex items-center gap-1 text-[10px] font-bold"
+                  >
+                    <PlusCircle className="w-3.5 h-3.5" />
+                    Add Unit
+                  </button>
+                </div>
+
+                <div className="space-y-2 max-h-36 overflow-y-auto pr-1">
+                  {newGroupUnits.map((unit, idx) => (
+                    <div key={idx} className="flex gap-2 items-center p-2 bg-slate-50 rounded-xl border border-slate-200">
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={unit.chassisNumber}
+                          onChange={(e) => {
+                            const updated = [...newGroupUnits];
+                            updated[idx].chassisNumber = e.target.value;
+                            setNewGroupUnits(updated);
+                          }}
+                          placeholder={`Chassis #${idx + 1}`}
+                          className="input w-full text-[10px] font-mono font-bold py-1.5 px-2"
+                          required
+                        />
+                      </div>
+                      <div className="flex-1">
+                        <input
+                          type="text"
+                          value={unit.engineNumber}
+                          onChange={(e) => {
+                            const updated = [...newGroupUnits];
+                            updated[idx].engineNumber = e.target.value;
+                            setNewGroupUnits(updated);
+                          }}
+                          placeholder={`Engine #${idx + 1}`}
+                          className="input w-full text-[10px] font-mono font-bold py-1.5 px-2"
+                          required
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setNewGroupUnits(prev => prev.filter((_, i) => i !== idx))}
+                        className="text-red-500 hover:text-red-700 p-1"
+                        title="Remove Restock Unit"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                  {newGroupUnits.length === 0 && (
+                    <p className="text-[10px] text-slate-400 italic text-center py-2">No additional restock units added. Add a row to restock this model.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex gap-3">
+                <button
+                  type="submit"
+                  className="btn btn-primary flex-1 py-2.5 font-bold flex items-center justify-center gap-1.5"
+                >
+                  <Save className="w-4 h-4" />
+                  Save Model & Add Units
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingGroup(null);
+                    setNewGroupUnits([]);
+                  }}
                   className="btn btn-secondary flex-1 py-2.5"
                 >
                   Cancel

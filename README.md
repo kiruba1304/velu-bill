@@ -84,6 +84,14 @@ A comprehensive billing and inventory management application built for Windows 1
 
 ## Development
 
+### Database Schema & Mappings Synchronization Rule
+⚠️ **CRITICAL RULE FOR DEVELOPMENT**
+Database operations, migrations, schemas, case normalizations, and query handlers are defined in **TWO** locations to support both Electron stand-alone desktop execution and Web/Fallback execution:
+1. `backend/server.js` (Web Fallback API)
+2. `electron.cjs` (Electron Main Process IPC handlers)
+
+**Every time** you modify table schemas (e.g. creating tables or adding columns with `addColumnIfNotExists`), key mapping tables (`KEY_MAPPINGS`), or query functions (such as `createBike`, `updateService`), **you MUST apply the identical changes in both files** to maintain synchronization.
+
 ### Available Scripts
 
 - `npm run dev` - Start development server with hot reload

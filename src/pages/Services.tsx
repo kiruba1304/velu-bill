@@ -1257,7 +1257,8 @@ const Services: React.FC = () => {
                     await updateService(billingModal.service.id, {
                       description: newDesc,
                       estimatedCost: finalCost,
-                      status: 'completed'
+                      status: 'completed',
+                      isBilled: 1
                     });
 
                     // Construct Bill object to save service sale in database Bills table

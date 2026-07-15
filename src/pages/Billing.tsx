@@ -645,7 +645,7 @@ const Billing: React.FC = () => {
  
       // Auto-complete the associated workshop service card status in the database
       if (loadedServiceId) {
-        await updateService(loadedServiceId, { status: 'completed' });
+        await updateService(loadedServiceId, { status: 'completed', isBilled: 1 });
         setLoadedServiceId(null);
       }
 
@@ -769,12 +769,12 @@ const Billing: React.FC = () => {
                 )}
 
                 {/* Show completed service tickets for this customer */}
-                {services.filter(s => s.customerId === selectedCustomer.id && s.status === 'completed').length > 0 && (
+                {services.filter(s => s.customerId === selectedCustomer.id && s.status !== 'cancelled' && s.isBilled !== 1).length > 0 && (
                   <div className="mt-3 pt-3 border-t border-slate-200/60">
                     <p className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">Unbilled Workshop Services</p>
                     <div className="space-y-1.5">
                       {services
-                        .filter(s => s.customerId === selectedCustomer.id && s.status === 'completed')
+                        .filter(s => s.customerId === selectedCustomer.id && s.status !== 'cancelled' && s.isBilled !== 1)
                         .map(srv => (
                           <button
                             key={srv.id}
