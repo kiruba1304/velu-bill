@@ -21,7 +21,7 @@ import { useAuth, AuthProvider } from './hooks/useAuth';
 import { useECommerceIntegration } from './hooks/useECommerceIntegration';
 import Login from './pages/Login';
 import Attendance from './pages/Attendance';
-import { Database, FileText, FileCode, FolderDown, Menu } from 'lucide-react';
+import { Database, FileText, FileCode, FolderDown, Menu, Download, RefreshCw, AlertCircle, CheckCircle } from 'lucide-react';
 
 type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
 
@@ -33,6 +33,45 @@ function AppContent() {
   useECommerceIntegration();
   const [isClosing, setIsClosing] = useState(false);
   const [closingCountdown, setClosingCountdown] = useState(15);
+
+  const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'>('idle');
+  const [updateProgress, setUpdateProgress] = useState(0);
+  const [updateVersion, setUpdateVersion] = useState('');
+  const [updateError, setUpdateError] = useState('');
+
+  useEffect(() => {
+    const api = (window as any).electronAPI;
+    if (!api) return;
+
+    if (api.onUpdateAvailable) {
+      api.onUpdateAvailable((info: any) => {
+        setUpdateStatus('available');
+        setUpdateVersion(info.version || '');
+      });
+    }
+
+    if (api.onUpdateProgress) {
+      api.onUpdateProgress((progress: any) => {
+        setUpdateStatus('downloading');
+        setUpdateProgress(Math.round(progress.percent || 0));
+      });
+    }
+
+    if (api.onUpdateDownloaded) {
+      api.onUpdateDownloaded((info: any) => {
+        setUpdateStatus('ready');
+        setUpdateVersion(info.version || '');
+      });
+    }
+
+    if (api.onUpdateError) {
+      api.onUpdateError((err: string) => {
+        setUpdateStatus('error');
+        setUpdateError(err);
+        setTimeout(() => setUpdateStatus('idle'), 8000);
+      });
+    }
+  }, []);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -319,6 +358,77 @@ function AppContent() {
               Safely writing to backup folder... Do not turn off your computer.
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Auto-updater Banner */}
+      {updateStatus !== 'idle' && updateStatus !== 'checking' && updateStatus !== 'available' && (
+        <div className="fixed bottom-6 right-6 z-[9999] w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950 text-slate-900 dark:text-white transition-all duration-300 transform translate-y-0 opacity-100 flex flex-col gap-3">
+          {updateStatus === 'downloading' && (
+            <>
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400">
+                  <Download className="h-5 w-5 animate-pulse" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold">Downloading Update</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Version {updateVersion}</p>
+                </div>
+              </div>
+              <div className="w-full">
+                <div className="w-full bg-slate-100 dark:bg-slate-800 h-2 rounded-full overflow-hidden relative">
+                  <div className="bg-blue-600 h-full rounded-full transition-all duration-300" style={{ width: `${updateProgress}%` }} />
+                </div>
+                <div className="flex justify-between text-xs text-slate-500 dark:text-slate-400 mt-1.5 font-medium">
+                  <span>Downloading...</span>
+                  <span>{updateProgress}%</span>
+                </div>
+              </div>
+            </>
+          )}
+
+          {updateStatus === 'ready' && (
+            <>
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-600 dark:bg-emerald-950/50 dark:text-emerald-400">
+                  <CheckCircle className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold">Update Ready!</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Version {updateVersion} is downloaded.</p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => (window as any).electronAPI.restartAndInstall()}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-[0.98] transition-all"
+                >
+                  <RefreshCw className="h-4 w-4 animate-spin" style={{ animationDuration: '3s' }} />
+                  Restart & Update
+                </button>
+                <button
+                  onClick={() => setUpdateStatus('idle')}
+                  className="w-full text-center text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium py-1 transition-colors"
+                >
+                  Later
+                </button>
+              </div>
+            </>
+          )}
+
+          {updateStatus === 'error' && (
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-red-600 dark:bg-red-950/50 dark:text-red-400">
+                <AlertCircle className="h-5 w-5" />
+              </div>
+              <div>
+                <h4 className="text-sm font-semibold text-red-600 dark:text-red-400">Update Failed</h4>
+                <p className="text-xs text-slate-500 dark:text-slate-400 truncate max-w-[200px]" title={updateError}>
+                  {updateError || 'An error occurred during update.'}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

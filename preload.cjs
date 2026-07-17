@@ -15,6 +15,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   showAlert: (message, title) => ipcRenderer.sendSync('show-alert-sync', { message, title }),
   showConfirm: (message, title) => ipcRenderer.sendSync('show-confirm-sync', { message, title }),
   onWebhookOrder: (callback) => ipcRenderer.on('webhook-order', (event, data) => callback(data)),
+  onUpdateAvailable: (callback) => ipcRenderer.on('update-available', (event, info) => callback(info)),
+  onUpdateProgress: (callback) => ipcRenderer.on('update-progress', (event, progress) => callback(progress)),
+  onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, info) => callback(info)),
+  onUpdateError: (callback) => ipcRenderer.on('update-error', (event, err) => callback(err)),
+  restartAndInstall: () => ipcRenderer.send('restart-and-install'),
   dbCall: (method, ...args) => ipcRenderer.invoke('db-call', { method, args })
 });
 

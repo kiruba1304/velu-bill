@@ -1,4 +1,5 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog, shell } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 // Fix Chromium cache access permission errors on Windows
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache');
@@ -9,6 +10,54 @@ const fsp = fs.promises;
 const express = require('express');
 const cors = require('cors');
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// Auto-updater configuration and events
+autoUpdater.autoDownload = true;
+
+autoUpdater.on('checking-for-update', () => {
+  console.log('Checking for updates...');
+});
+
+autoUpdater.on('update-available', (info) => {
+  console.log('Update available:', info.version);
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('update-available', info);
+  }
+});
+
+autoUpdater.on('update-not-available', () => {
+  console.log('Update not available.');
+});
+
+autoUpdater.on('error', (err) => {
+  console.error('Error in auto-updater:', err);
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('update-error', err.message || String(err));
+  }
+});
+
+autoUpdater.on('download-progress', (progressObj) => {
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('update-progress', {
+      percent: progressObj.percent,
+      bytesPerSecond: progressObj.bytesPerSecond,
+      transferred: progressObj.transferred,
+      total: progressObj.total
+    });
+  }
+});
+
+autoUpdater.on('update-downloaded', (info) => {
+  console.log('Update downloaded successfully');
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('update-downloaded', info);
+  }
+});
+
+// IPC: restart and install the update
+ipcMain.on('restart-and-install', () => {
+  autoUpdater.quitAndInstall();
+});
 
 const mysql = require('mysql2/promise');
 const crypto = require('crypto');
@@ -2364,6 +2413,11 @@ app.whenReady().then(async () => {
     console.error('Failed to initialize MySQL Database:', err);
   }
   createWindow();
+
+  // Check for updates in production (packaged) environments
+  if (!isDev) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
 });
 
 app.on('window-all-closed', () => {

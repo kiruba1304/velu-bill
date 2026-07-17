@@ -1,6 +1,6 @@
 {
   "name": "bill-podu",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "type": "module",
   "description": "Professional Billing Software - Bill போடு",
   "main": "electron.cjs",
@@ -24,6 +24,11 @@
   "build": {
     "appId": "com.billpodu.app",
     "productName": "Bill போடு",
+    "publish": {
+      "provider": "github",
+      "owner": "kiruba1304",
+      "repo": "velu-bill"
+    },
     "directories": {
       "output": "release"
     },
@@ -88,6 +93,7 @@
     "@vitejs/plugin-react": "^5.0.2",
     "autoprefixer": "^10.4.21",
     "cors": "^2.8.6",
+    "electron-updater": "^6.8.9",
     "electron-vite": "^4.0.0",
     "express": "^5.2.1",
     "html5-qrcode": "^2.3.8",
