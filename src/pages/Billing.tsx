@@ -414,12 +414,12 @@ const Billing: React.FC = () => {
   const generateBillNumber = () => {
     const now = new Date();
     const yyyymmdd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const key = `bill_counter_${yyyymmdd}`;
+    const key = `bill_counter_branch_${activeBranchId || 1}_${yyyymmdd}`;
     let counter = parseInt(localStorage.getItem(key) || '0', 10);
     counter += 1;
     localStorage.setItem(key, String(counter));
     const seq = String(counter).padStart(2, '0');
-    return `${yyyymmdd}-${seq}`;
+    return `B${activeBranchId || 1}-${yyyymmdd}-${seq}`;
   };
 
   const handleCreditAdjustment = async () => {
