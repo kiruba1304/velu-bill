@@ -31,8 +31,13 @@ autoUpdater.on('update-not-available', () => {
 
 autoUpdater.on('error', (err) => {
   console.error('Error in auto-updater:', err);
+  const errMsg = err.message || String(err);
+  // Prevent showing a scary error banner in the UI if there are no releases published on GitHub yet.
+  if (errMsg.includes('No published versions on GitHub') || errMsg.includes('HttpError: 404')) {
+    return;
+  }
   if (mainWindow && mainWindow.webContents) {
-    mainWindow.webContents.send('update-error', err.message || String(err));
+    mainWindow.webContents.send('update-error', errMsg);
   }
 });
 

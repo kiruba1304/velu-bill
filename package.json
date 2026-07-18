@@ -1,6 +1,6 @@
 {
   "name": "bill-podu",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "type": "module",
   "description": "Professional Billing Software - Bill போடு",
   "main": "electron.cjs",
@@ -19,7 +19,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "seed": "ts-node src/database/seed.ts"
+    "seed": "ts-node src/database/seed.ts",
+    "publish:win": "dotenv -e .env -- electron-builder --win -p always"
   },
   "build": {
     "appId": "com.billpodu.app",

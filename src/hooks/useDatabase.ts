@@ -374,9 +374,9 @@ export const useProducts = (branchId?: number) => {
 
   const getTargetBranchId = () => branchId !== undefined ? branchId : getActiveBranchId();
 
-  const loadProducts = async () => {
+  const loadProducts = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       setError(null);
       await db.waitForInit();
       const currentBranchId = getTargetBranchId();
@@ -408,7 +408,7 @@ export const useProducts = (branchId?: number) => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load products');
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
@@ -479,12 +479,12 @@ export const useProducts = (branchId?: number) => {
     };
     window.addEventListener('branch-changed', handleBranchChange);
     const handleSync = () => {
-      loadProducts();
+      loadProducts(true);
     };
     window.addEventListener('ecommerce-sync-completed', handleSync);
     
     const interval = setInterval(() => {
-      loadProducts();
+      loadProducts(true);
     }, 15000);
 
     return () => {
@@ -514,9 +514,9 @@ export const useCategories = (branchId?: number) => {
 
   const getTargetBranchId = () => branchId !== undefined ? branchId : getActiveBranchId();
 
-  const loadCategories = async () => {
+  const loadCategories = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       setError(null);
       await db.waitForInit();
       const currentBranchId = getTargetBranchId();
@@ -543,7 +543,7 @@ export const useCategories = (branchId?: number) => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load categories');
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
@@ -591,12 +591,12 @@ export const useCategories = (branchId?: number) => {
     };
     window.addEventListener('branch-changed', handleBranchChange);
     const handleSync = () => {
-      loadCategories();
+      loadCategories(true);
     };
     window.addEventListener('ecommerce-sync-completed', handleSync);
     
     const interval = setInterval(() => {
-      loadCategories();
+      loadCategories(true);
     }, 15000);
 
     return () => {
@@ -625,9 +625,9 @@ export const useCustomers = (branchId?: number) => {
 
   const getTargetBranchId = () => branchId !== undefined ? branchId : getActiveBranchId();
 
-  const loadCustomers = async () => {
+  const loadCustomers = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       setError(null);
       await db.waitForInit();
       const currentBranchId = getTargetBranchId();
@@ -654,7 +654,7 @@ export const useCustomers = (branchId?: number) => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load customers');
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
@@ -715,12 +715,12 @@ export const useCustomers = (branchId?: number) => {
     };
     window.addEventListener('branch-changed', handleBranchChange);
     const handleSync = () => {
-      loadCustomers();
+      loadCustomers(true);
     };
     window.addEventListener('ecommerce-sync-completed', handleSync);
     
     const interval = setInterval(() => {
-      loadCustomers();
+      loadCustomers(true);
     }, 15000);
 
     return () => {
@@ -833,9 +833,9 @@ export const useBills = (branchId?: number) => {
 
   const getTargetBranchId = () => branchId !== undefined ? branchId : getActiveBranchId();
 
-  const loadBills = async () => {
+  const loadBills = async (isBackground = false) => {
     try {
-      setLoading(true);
+      if (!isBackground) setLoading(true);
       setError(null);
       await db.waitForInit();
       const list = await db.getBills(getTargetBranchId());
@@ -846,7 +846,7 @@ export const useBills = (branchId?: number) => {
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load bills');
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
@@ -885,12 +885,12 @@ export const useBills = (branchId?: number) => {
     };
     window.addEventListener('branch-changed', handleBranchChange);
     const handleSync = () => {
-      loadBills();
+      loadBills(true);
     };
     window.addEventListener('ecommerce-sync-completed', handleSync);
     
     const interval = setInterval(() => {
-      loadBills();
+      loadBills(true);
     }, 15000);
 
     return () => {
