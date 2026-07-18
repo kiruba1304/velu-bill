@@ -137,6 +137,17 @@ const Billing: React.FC = () => {
         setWalkInPhone(data.customerPhone || '');
       }
 
+      let activeGst = 18;
+      try {
+        const rawSettings = localStorage.getItem('app_settings');
+        if (rawSettings) {
+          const parsed = JSON.parse(rawSettings);
+          if (parsed.gstPercentage !== undefined) {
+            activeGst = parseFloat(parsed.gstPercentage) || 0;
+          }
+        }
+      } catch {}
+
       const dummyServiceProduct: Product = {
         id: -999,
         name: `Service: ${data.description || 'Vehicle Repair'}`,
@@ -145,7 +156,7 @@ const Billing: React.FC = () => {
         costPrice: 0,
         sellingPrice: data.serviceCost || 0,
         discount: 0,
-        gst: 18,
+        gst: activeGst,
         barcode: 'SERVICE_CUSTOM',
         finalPrice: data.serviceCost || 0,
         createdAt: new Date().toISOString(),
@@ -159,7 +170,7 @@ const Billing: React.FC = () => {
         quantity: 1,
         unitPrice: data.serviceCost || 0,
         discount: 0,
-        gst: 18,
+        gst: activeGst,
         totalPrice: data.serviceCost || 0,
         product: dummyServiceProduct
       };
@@ -176,6 +187,17 @@ const Billing: React.FC = () => {
 
   const handleLoadServiceIntoBill = async (srv: Service) => {
     try {
+      let activeGst = 18;
+      try {
+        const rawSettings = localStorage.getItem('app_settings');
+        if (rawSettings) {
+          const parsed = JSON.parse(rawSettings);
+          if (parsed.gstPercentage !== undefined) {
+            activeGst = parseFloat(parsed.gstPercentage) || 0;
+          }
+        }
+      } catch {}
+
       const dummyServiceProduct: Product = {
         id: -999,
         name: `Service: ${srv.description || 'Vehicle Repair'}`,
@@ -184,7 +206,7 @@ const Billing: React.FC = () => {
         costPrice: 0,
         sellingPrice: srv.estimatedCost || 0,
         discount: 0,
-        gst: 18,
+        gst: activeGst,
         barcode: 'SERVICE_CUSTOM',
         finalPrice: srv.estimatedCost || 0,
         createdAt: new Date().toISOString(),
@@ -198,7 +220,7 @@ const Billing: React.FC = () => {
         quantity: 1,
         unitPrice: srv.estimatedCost || 0,
         discount: 0,
-        gst: 18,
+        gst: activeGst,
         totalPrice: srv.estimatedCost || 0,
         product: dummyServiceProduct
       };
@@ -258,15 +280,20 @@ const Billing: React.FC = () => {
       ));
     } else {
       let activeGst = 18;
-      try {
-        const raw = localStorage.getItem('app_settings');
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed.gstPercentage !== undefined) {
-            activeGst = parseFloat(parsed.gstPercentage) || 0;
+      const activeBranch = branches.find(b => Number(b.id) === Number(activeBranchId));
+      if (activeBranch) {
+        activeGst = activeBranch.gstPercentage !== undefined ? parseFloat(activeBranch.gstPercentage) : 18;
+      } else {
+        try {
+          const raw = localStorage.getItem('app_settings');
+          if (raw) {
+            const parsed = JSON.parse(raw);
+            if (parsed.gstPercentage !== undefined) {
+              activeGst = parseFloat(parsed.gstPercentage) || 0;
+            }
           }
-        }
-      } catch {}
+        } catch {}
+      }
 
       // Add new item
       const newItem: BillItemWithProduct = {

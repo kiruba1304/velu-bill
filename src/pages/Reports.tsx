@@ -459,13 +459,14 @@ const Reports: React.FC = () => {
         const cgst = itemGstAmt / 2;
         const sgst = itemGstAmt / 2;
 
+        const p = products.find(pp => pp.id === it.productId);
         list.push({
           id: `${b.billNumber}-${it.id}`,
           billNumber: b.billNumber,
           createdAt: b.createdAt,
           customerName: b.customer?.name || 'Walk-in Customer',
-          productName: it.product?.name || `Product #${it.productId}`,
-          productCode: it.product?.productCode || '',
+          productName: p?.name || it.product?.name || `Product #${it.productId}`,
+          productCode: p?.productCode || it.product?.productCode || '',
           gstRate: it.gst,
           taxableValue: adjustedBase,
           cgst,
@@ -500,7 +501,7 @@ const Reports: React.FC = () => {
     });
 
     return list;
-  }, [periodBills]);
+  }, [periodBills, products]);
 
   const filteredGstRecords = useMemo(() => {
     return gstRecords.filter(r => {
@@ -831,6 +832,14 @@ const Reports: React.FC = () => {
   }, []);
 
   const handlePrintBill = (bill: Bill) => {
+    const populatedBill = {
+      ...bill,
+      items: (bill.items || []).map(item => ({
+        ...item,
+        product: products.find(p => p.id === item.productId) || item.product
+      }))
+    };
+
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
@@ -851,30 +860,30 @@ const Reports: React.FC = () => {
       logoUrl: appSettings.logoUrl || ''
     };
 
-    const qrData = generateQRData(bill, settings);
+    const qrData = generateQRData(populatedBill, settings);
     const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
 
     let receiptHTML = '';
 
     switch (selectedTemplate) {
       case 'thermal-compact':
-        receiptHTML = generateThermalCompactReceipt(bill, settings, qrData);
+        receiptHTML = generateThermalCompactReceipt(populatedBill, settings, qrData);
         break;
       case 'thermal-detailed':
-        receiptHTML = generateThermalDetailedReceipt(bill, settings, qrData);
+        receiptHTML = generateThermalDetailedReceipt(populatedBill, settings, qrData);
         break;
       case 'regular-a5':
-        receiptHTML = generateRegularA5Receipt(bill, settings, qrData);
+        receiptHTML = generateRegularA5Receipt(populatedBill, settings, qrData);
         break;
       case 'regular-a4':
-        receiptHTML = generateRegularA4Receipt(bill, settings, qrData);
+        receiptHTML = generateRegularA4Receipt(populatedBill, settings, qrData);
         break;
       case 'regular-a4-detailed':
-        receiptHTML = generateRegularA4DetailedReceipt(bill, settings, qrData);
+        receiptHTML = generateRegularA4DetailedReceipt(populatedBill, settings, qrData);
         break;
       case 'thermal-standard':
       default:
-        receiptHTML = generateThermalStandardReceipt(bill, settings, qrData);
+        receiptHTML = generateThermalStandardReceipt(populatedBill, settings, qrData);
     }
 
     const api = (window as any).electronAPI;
@@ -898,6 +907,14 @@ const Reports: React.FC = () => {
   };
 
   const handlePreviewBill = (bill: Bill) => {
+    const populatedBill = {
+      ...bill,
+      items: (bill.items || []).map(item => ({
+        ...item,
+        product: products.find(p => p.id === item.productId) || item.product
+      }))
+    };
+
     const appSettingsRaw = localStorage.getItem('app_settings');
     const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
     
@@ -915,30 +932,30 @@ const Reports: React.FC = () => {
       logoUrl: appSettings.logoUrl || ''
     };
 
-    const qrData = generateQRData(bill, settings);
+    const qrData = generateQRData(populatedBill, settings);
     const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
 
     let receiptHTML = '';
 
     switch (selectedTemplate) {
       case 'thermal-compact':
-        receiptHTML = generateThermalCompactReceipt(bill, settings, qrData);
+        receiptHTML = generateThermalCompactReceipt(populatedBill, settings, qrData);
         break;
       case 'thermal-detailed':
-        receiptHTML = generateThermalDetailedReceipt(bill, settings, qrData);
+        receiptHTML = generateThermalDetailedReceipt(populatedBill, settings, qrData);
         break;
       case 'regular-a5':
-        receiptHTML = generateRegularA5Receipt(bill, settings, qrData);
+        receiptHTML = generateRegularA5Receipt(populatedBill, settings, qrData);
         break;
       case 'regular-a4':
-        receiptHTML = generateRegularA4Receipt(bill, settings, qrData);
+        receiptHTML = generateRegularA4Receipt(populatedBill, settings, qrData);
         break;
       case 'regular-a4-detailed':
-        receiptHTML = generateRegularA4DetailedReceipt(bill, settings, qrData);
+        receiptHTML = generateRegularA4DetailedReceipt(populatedBill, settings, qrData);
         break;
       case 'thermal-standard':
       default:
-        receiptHTML = generateThermalStandardReceipt(bill, settings, qrData);
+        receiptHTML = generateThermalStandardReceipt(populatedBill, settings, qrData);
     }
 
     const previewHTML = receiptHTML.replace(
