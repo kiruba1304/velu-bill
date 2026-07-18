@@ -440,6 +440,7 @@ async function initDb() {
   await addColumnIfNotExists('Customers', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Customers', 'allowedBranches', 'TEXT NULL');
   await addColumnIfNotExists('Bills', 'branchId', 'INT NULL DEFAULT 1');
+  await addColumnIfNotExists('Bills', 'createdBy', 'VARCHAR(255) NULL');
   await addColumnIfNotExists('InventoryTransactions', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Parties', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('PartyMovements', 'branchId', 'INT NULL DEFAULT 1');
@@ -1363,8 +1364,8 @@ async function _executeDbCallInner(method, args) {
         await conn.beginTransaction();
 
         const [billRes] = await conn.query(
-          `INSERT INTO Bills (billNumber, customerId, totalAmount, totalDiscount, totalGst, finalAmount, paymentMethod, status, createdAt, updatedAt, isGstBill, salesChannel, invoiceType, previousBalance, currentlyPaid, totalOutstanding, netBalance, shippingCharge, shippingGst, branchId)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO Bills (billNumber, customerId, totalAmount, totalDiscount, totalGst, finalAmount, paymentMethod, status, createdAt, updatedAt, isGstBill, salesChannel, invoiceType, previousBalance, currentlyPaid, totalOutstanding, netBalance, shippingCharge, shippingGst, branchId, createdBy)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             newBill.billNumber,
             newBill.customerId || null,
@@ -1385,7 +1386,8 @@ async function _executeDbCallInner(method, args) {
             newBill.netBalance ?? null,
             newBill.shippingCharge || 0,
             newBill.shippingGst || 0,
-            targetBranch
+            targetBranch,
+            newBill.createdBy || null
           ]
         );
         const billId = billRes.insertId;
@@ -1528,7 +1530,7 @@ async function _executeDbCallInner(method, args) {
       const [bills] = await pool.query('SELECT * FROM Bills');
       sql += '-- Table: Bills\n';
       bills.forEach(b => {
-        sql += `INSERT INTO Bills VALUES (${b.id}, '${b.billNumber.replace(/'/g, "''")}', ${b.customerId || 'NULL'}, ${b.totalAmount || 0}, ${b.totalDiscount || 0}, ${b.totalGst || 0}, ${b.finalAmount || 0}, '${b.paymentMethod}', '${b.status}', '${b.createdAt}', '${b.updatedAt}', ${b.isGstBill ? 1 : 0}, '${b.salesChannel || 'pos'}', '${b.invoiceType || 'customer_bill'}', ${b.previousBalance ?? 'NULL'}, ${b.currentlyPaid ?? 'NULL'}, ${b.totalOutstanding ?? 'NULL'}, ${b.netBalance ?? 'NULL'}, ${b.shippingCharge || 0}, ${b.shippingGst || 0});\n`;
+        sql += `INSERT INTO Bills (id, billNumber, customerId, totalAmount, totalDiscount, totalGst, finalAmount, paymentMethod, status, createdAt, updatedAt, isGstBill, salesChannel, invoiceType, previousBalance, currentlyPaid, totalOutstanding, netBalance, shippingCharge, shippingGst, branchId, createdBy) VALUES (${b.id}, '${b.billNumber.replace(/'/g, "''")}', ${b.customerId || 'NULL'}, ${b.totalAmount || 0}, ${b.totalDiscount || 0}, ${b.totalGst || 0}, ${b.finalAmount || 0}, '${b.paymentMethod}', '${b.status}', '${b.createdAt}', '${b.updatedAt}', ${b.isGstBill ? 1 : 0}, '${b.salesChannel || 'pos'}', '${b.invoiceType || 'customer_bill'}', ${b.previousBalance ?? 'NULL'}, ${b.currentlyPaid ?? 'NULL'}, ${b.totalOutstanding ?? 'NULL'}, ${b.netBalance ?? 'NULL'}, ${b.shippingCharge || 0}, ${b.shippingGst || 0}, ${b.branchId || 1}, ${b.createdBy ? `'${b.createdBy.replace(/'/g, "''")}'` : 'NULL'});\n`;
       });
       sql += '\n';
 

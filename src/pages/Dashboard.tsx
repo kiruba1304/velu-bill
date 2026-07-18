@@ -8,6 +8,7 @@ import {
   DollarSign,
   Settings as SettingsIcon,
   Printer,
+  Eye,
 } from 'lucide-react';
 import { useProducts, useCustomers, useBills } from '../hooks/useDatabase';
 import { Bill } from '../types';
@@ -185,6 +186,62 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     (printWindow as any).document.close();
   };
 
+  const handlePreviewBill = (bill: Bill) => {
+    const appSettingsRaw = localStorage.getItem('app_settings');
+    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
+    
+    const settings = {
+      storeName: appSettings.storeName || 'SASHVIKA SAREES',
+      upiId: appSettings.upiId || '',
+      bankAccountNumber: appSettings.bankAccountNumber || '',
+      bankIfscCode: appSettings.bankIfscCode || '',
+      accountHolderName: appSettings.accountHolderName || '',
+      address: appSettings.address || '',
+      phone: appSettings.phone || '',
+      gstNumber: appSettings.gstNumber || '',
+      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
+      footerMessage: appSettings.footerMessage || '',
+      logoUrl: appSettings.logoUrl || ''
+    };
+
+    const qrData = generateQRData(bill, settings);
+    const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
+
+    let receiptHTML = '';
+
+    switch (selectedTemplate) {
+      case 'thermal-compact':
+        receiptHTML = generateThermalCompactReceipt(bill, settings, qrData);
+        break;
+      case 'thermal-detailed':
+        receiptHTML = generateThermalDetailedReceipt(bill, settings, qrData);
+        break;
+      case 'regular-a5':
+        receiptHTML = generateRegularA5Receipt(bill, settings, qrData);
+        break;
+      case 'regular-a4':
+        receiptHTML = generateRegularA4Receipt(bill, settings, qrData);
+        break;
+      case 'regular-a4-detailed':
+        receiptHTML = generateRegularA4DetailedReceipt(bill, settings, qrData);
+        break;
+      case 'thermal-standard':
+      default:
+        receiptHTML = generateThermalStandardReceipt(bill, settings, qrData);
+    }
+
+    const previewHTML = receiptHTML.replace(
+      /<script>[\s\S]*?window\.print\(\)[\s\S]*?<\/script>/gi,
+      ''
+    );
+
+    const previewWindow = window.open('', '_blank');
+    if (previewWindow) {
+      previewWindow.document.write(previewHTML);
+      previewWindow.document.close();
+    }
+  };
+
   return (
     <div className="min-h-full rounded-none md:rounded-[2rem] bg-white/70 p-4 md:p-8 shadow-soft backdrop-blur-sm">
       <div className="mb-8 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -271,7 +328,10 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           <div className="mb-4 flex items-center justify-between">
             <h2 className="text-lg font-semibold text-slate-900">Recent Bills</h2>
             <button 
-              onClick={() => onNavigate('billing')}
+              onClick={() => {
+                localStorage.setItem('reports_active_subtab', 'bills');
+                onNavigate('reports');
+              }}
               className="text-sm font-medium text-primary-600 hover:text-primary-700"
             >
               View All
@@ -301,13 +361,22 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                         {new Date(bill.createdAt).toLocaleDateString()}
                       </p>
                     </div>
-                    <button
-                      onClick={() => handlePrintBill(bill)}
-                      className="btn-icon btn-icon-neutral text-slate-500 hover:text-primary-600 p-2.5 rounded-xl bg-white border border-slate-200 shadow-sm hover:border-primary-100 transition-all"
-                      title="Preview and Print Bill"
-                    >
-                      <Printer className="h-4 w-4" />
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => handlePreviewBill(bill)}
+                        className="btn-icon btn-icon-neutral text-slate-500 hover:text-primary-600 p-2.5 rounded-xl bg-white border border-slate-200 shadow-sm hover:border-primary-100 transition-all"
+                        title="Preview Bill"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </button>
+                      <button
+                        onClick={() => handlePrintBill(bill)}
+                        className="btn-icon btn-icon-neutral text-slate-500 hover:text-primary-600 p-2.5 rounded-xl bg-white border border-slate-200 shadow-sm hover:border-primary-100 transition-all"
+                        title="Print Bill"
+                      >
+                        <Printer className="h-4 w-4" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );

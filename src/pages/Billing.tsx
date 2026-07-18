@@ -28,7 +28,7 @@ interface BillItemWithProduct extends BillItem {
 }
 
 const Billing: React.FC = () => {
-  const { activeBranchId, branches } = useAuth();
+  const { activeBranchId, branches, currentUser } = useAuth();
   const [billItems, setBillItems] = useState<BillItemWithProduct[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [loadedServiceId, setLoadedServiceId] = useState<number | null>(null);
@@ -582,7 +582,8 @@ const Billing: React.FC = () => {
         previousBalance: paymentMethod === 'credit' ? previousBalance : undefined,
         currentlyPaid: paymentMethod === 'credit' ? currentlyPayAmount : undefined,
         totalOutstanding: paymentMethod === 'credit' ? totalOutstanding : undefined,
-        netBalance: paymentMethod === 'credit' ? netBalance : undefined
+        netBalance: paymentMethod === 'credit' ? netBalance : undefined,
+        createdBy: currentUser?.name || currentUser?.username || 'System'
       };
 
       if (editingBillMeta) {
@@ -601,7 +602,8 @@ const Billing: React.FC = () => {
           previousBalance: tempBill.previousBalance,
           currentlyPaid: tempBill.currentlyPaid,
           totalOutstanding: tempBill.totalOutstanding,
-          netBalance: tempBill.netBalance
+          netBalance: tempBill.netBalance,
+          createdBy: tempBill.createdBy
         });
 
         if (!success) {

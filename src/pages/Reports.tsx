@@ -12,9 +12,20 @@ import {
   RefreshCw,
   PieChart,
   LineChart,
-  Target
+  Target,
+  Printer
 } from 'lucide-react';
 import { useBills, useProducts, useCustomers } from '../hooks/useDatabase';
+import {
+  generateQRData,
+  generateThermalCompactReceipt,
+  generateThermalDetailedReceipt,
+  generateThermalStandardReceipt,
+  generateRegularA5Receipt,
+  generateRegularA4Receipt,
+  generateRegularA4DetailedReceipt
+} from '../utils/templateGenerator';
+import { Bill } from '../types';
 
 interface SalesData {
   date: string;
@@ -346,7 +357,14 @@ const Reports: React.FC = () => {
   const [toDate, setToDate] = useState<string>('');
   const [showAllProducts, setShowAllProducts] = useState(false);
   const [showAllCustomers, setShowAllCustomers] = useState(false);
-  const [activeSubTab, setActiveSubTab] = useState<'sales' | 'gst'>('sales');
+  const [activeSubTab, setActiveSubTab] = useState<'sales' | 'gst' | 'bills'>(() => {
+    const saved = localStorage.getItem('reports_active_subtab');
+    if (saved === 'bills' || saved === 'sales' || saved === 'gst') {
+      localStorage.removeItem('reports_active_subtab');
+      return saved as 'sales' | 'gst' | 'bills';
+    }
+    return 'sales';
+  });
   const [gstRateFilter, setGstRateFilter] = useState<string>('all');
 
   const periodBills = useMemo(() => {
@@ -808,9 +826,132 @@ const Reports: React.FC = () => {
   ];
 
   const years = useMemo(() => {
-    const currentYear = new Date().getFullYear();
-    return Array.from({ length: 5 }, (_, i) => currentYear - 3 + i);
+    const current = new Date().getFullYear();
+    return Array.from({ length: 5 }, (_, i) => current - 3 + i);
   }, []);
+
+  const handlePrintBill = (bill: Bill) => {
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) return;
+
+    const appSettingsRaw = localStorage.getItem('app_settings');
+    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
+    
+    const settings = {
+      storeName: appSettings.storeName || 'SASHVIKA SAREES',
+      upiId: appSettings.upiId || '',
+      bankAccountNumber: appSettings.bankAccountNumber || '',
+      bankIfscCode: appSettings.bankIfscCode || '',
+      accountHolderName: appSettings.accountHolderName || '',
+      address: appSettings.address || '',
+      phone: appSettings.phone || '',
+      gstNumber: appSettings.gstNumber || '',
+      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
+      footerMessage: appSettings.footerMessage || '',
+      logoUrl: appSettings.logoUrl || ''
+    };
+
+    const qrData = generateQRData(bill, settings);
+    const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
+
+    let receiptHTML = '';
+
+    switch (selectedTemplate) {
+      case 'thermal-compact':
+        receiptHTML = generateThermalCompactReceipt(bill, settings, qrData);
+        break;
+      case 'thermal-detailed':
+        receiptHTML = generateThermalDetailedReceipt(bill, settings, qrData);
+        break;
+      case 'regular-a5':
+        receiptHTML = generateRegularA5Receipt(bill, settings, qrData);
+        break;
+      case 'regular-a4':
+        receiptHTML = generateRegularA4Receipt(bill, settings, qrData);
+        break;
+      case 'regular-a4-detailed':
+        receiptHTML = generateRegularA4DetailedReceipt(bill, settings, qrData);
+        break;
+      case 'thermal-standard':
+      default:
+        receiptHTML = generateThermalStandardReceipt(bill, settings, qrData);
+    }
+
+    const api = (window as any).electronAPI;
+    if (api?.printHtml) {
+      try { (printWindow as any).close(); } catch { }
+      const selectedReceiptPrinter = localStorage.getItem('receipt_printer_name') || '';
+      api.printHtml(receiptHTML, { deviceName: selectedReceiptPrinter || undefined })
+        .catch((err: any) => {
+          const errMsg = err?.message || String(err);
+          if (errMsg.includes('canceled') || errMsg.includes('cancelled')) {
+            console.log('Print job was canceled by the user.');
+            return;
+          }
+          alert('Print failed: ' + errMsg);
+        });
+      return;
+    }
+
+    (printWindow as any).document.write(receiptHTML);
+    (printWindow as any).document.close();
+  };
+
+  const handlePreviewBill = (bill: Bill) => {
+    const appSettingsRaw = localStorage.getItem('app_settings');
+    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
+    
+    const settings = {
+      storeName: appSettings.storeName || 'SASHVIKA SAREES',
+      upiId: appSettings.upiId || '',
+      bankAccountNumber: appSettings.bankAccountNumber || '',
+      bankIfscCode: appSettings.bankIfscCode || '',
+      accountHolderName: appSettings.accountHolderName || '',
+      address: appSettings.address || '',
+      phone: appSettings.phone || '',
+      gstNumber: appSettings.gstNumber || '',
+      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
+      footerMessage: appSettings.footerMessage || '',
+      logoUrl: appSettings.logoUrl || ''
+    };
+
+    const qrData = generateQRData(bill, settings);
+    const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
+
+    let receiptHTML = '';
+
+    switch (selectedTemplate) {
+      case 'thermal-compact':
+        receiptHTML = generateThermalCompactReceipt(bill, settings, qrData);
+        break;
+      case 'thermal-detailed':
+        receiptHTML = generateThermalDetailedReceipt(bill, settings, qrData);
+        break;
+      case 'regular-a5':
+        receiptHTML = generateRegularA5Receipt(bill, settings, qrData);
+        break;
+      case 'regular-a4':
+        receiptHTML = generateRegularA4Receipt(bill, settings, qrData);
+        break;
+      case 'regular-a4-detailed':
+        receiptHTML = generateRegularA4DetailedReceipt(bill, settings, qrData);
+        break;
+      case 'thermal-standard':
+      default:
+        receiptHTML = generateThermalStandardReceipt(bill, settings, qrData);
+    }
+
+    const previewHTML = receiptHTML.replace(
+      /<script>[\s\S]*?window\.print\(\)[\s\S]*?<\/script>/gi,
+      ''
+    );
+
+    const previewWindow = window.open('', '_blank');
+    if (previewWindow) {
+      previewWindow.document.write(previewHTML);
+      previewWindow.document.close();
+    }
+  };
 
   return (
     <div className="min-h-full rounded-none md:rounded-[2rem] bg-white/70 p-4 md:p-8 shadow-soft backdrop-blur-sm">
@@ -843,6 +984,16 @@ const Reports: React.FC = () => {
           }`}
         >
           📈 Sales Overview & Trends
+        </button>
+        <button
+          onClick={() => setActiveSubTab('bills')}
+          className={`pb-3 px-6 text-sm font-bold transition-all border-b-2 ${
+            activeSubTab === 'bills'
+              ? 'border-primary-600 text-primary-600'
+              : 'border-transparent text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          📄 Invoices / Bills List
         </button>
         <button
           onClick={() => setActiveSubTab('gst')}
@@ -933,7 +1084,7 @@ const Reports: React.FC = () => {
         </div>
       </div>
 
-      {activeSubTab === 'sales' ? (
+      {activeSubTab === 'sales' && (
         <>
           {/* Key Metrics */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
@@ -1233,7 +1384,9 @@ const Reports: React.FC = () => {
             </div>
           )}
         </>
-      ) : (
+      )}
+
+      {activeSubTab === 'gst' && (
         <div className="space-y-6">
           {/* GST Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -1358,6 +1511,84 @@ const Reports: React.FC = () => {
                     </tr>
                   </tfoot>
                 )}
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {activeSubTab === 'bills' && (
+        <div className="space-y-6">
+          <div className="card border border-white/60 bg-white/85 shadow-soft">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900">Invoices / Bills List</h3>
+                <p className="text-xs text-slate-500 mt-0.5">List of all bills generated in the selected period, ordered date-wise.</p>
+              </div>
+            </div>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-100">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b border-slate-200 bg-slate-50/80">
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Invoice No</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Date & Time</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Customer</th>
+                    <th className="px-4 py-3 text-right font-semibold text-slate-700">Subtotal</th>
+                    <th className="px-4 py-3 text-right font-semibold text-slate-700">Discount</th>
+                    <th className="px-4 py-3 text-right font-semibold text-slate-700">GST</th>
+                    <th className="px-4 py-3 text-right font-semibold text-slate-700">Total Amount</th>
+                    <th className="px-4 py-3 text-left font-semibold text-slate-700">Payment Mode</th>
+                    <th className="px-4 py-3 text-center font-semibold text-slate-700">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {periodBills.length > 0 ? (
+                    periodBills.map((bill) => {
+                      const customerName = bill.customer?.name || 'Walk-in Customer';
+                      return (
+                        <tr key={bill.id} className="border-b border-slate-100 hover:bg-slate-50/50">
+                          <td className="px-4 py-3 font-semibold text-slate-900">{bill.billNumber}</td>
+                          <td className="px-4 py-3 text-slate-600">
+                            {new Date(bill.createdAt).toLocaleDateString()} {new Date(bill.createdAt).toLocaleTimeString()}
+                          </td>
+                          <td className="px-4 py-3 text-slate-700">{customerName}</td>
+                          <td className="px-4 py-3 text-right text-slate-600">₹{bill.totalAmount.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-right text-red-600">-₹{bill.totalDiscount.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-right text-slate-600">₹{bill.totalGst.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-right font-bold text-slate-900">₹{bill.finalAmount.toFixed(2)}</td>
+                          <td className="px-4 py-3 text-left">
+                            <span className="rounded-full bg-slate-100 px-2 py-0.5 font-bold text-slate-700 uppercase">
+                              {bill.paymentMethod}
+                            </span>
+                          </td>
+                          <td className="px-4 py-3 text-center space-x-2">
+                            <button
+                              onClick={() => handlePreviewBill(bill)}
+                              className="text-slate-500 hover:text-primary-600 p-1.5 rounded-lg border border-slate-200 bg-white shadow-sm inline-flex items-center"
+                              title="Preview Bill"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handlePrintBill(bill)}
+                              className="text-slate-500 hover:text-primary-600 p-1.5 rounded-lg border border-slate-200 bg-white shadow-sm inline-flex items-center"
+                              title="Print Bill"
+                            >
+                              <Printer className="w-3.5 h-3.5" />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  ) : (
+                    <tr>
+                      <td colSpan={9} className="px-4 py-8 text-center text-slate-500 font-medium">
+                        No invoices found for the selected period.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
               </table>
             </div>
           </div>

@@ -80,6 +80,7 @@ export const generateThermalCompactReceipt = (bill: Bill, settings: AppSettings,
           <div><strong>Bill:</strong> ${bill.billNumber}</div>
           <div><strong>Date:</strong> ${new Date(bill.createdAt).toLocaleString()}</div>
           ${bill.customer ? `<div><strong>Cust:</strong> ${bill.customer.name}</div>` : ''}
+          ${bill.createdBy ? `<div><strong>Billed By:</strong> ${bill.createdBy}</div>` : ''}
         </div>
         <div class="items">
           <div class="item" style="border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 5px; font-weight: bold; font-size: 9px;">
@@ -119,7 +120,10 @@ export const generateThermalCompactReceipt = (bill: Bill, settings: AppSettings,
           </div>
           ` : ''}
         </div>
-        <div class="footer">${footerMsg.replace(/\n/g, '<br>')}</div>
+        <div class="footer">
+          ${bill.createdBy ? `<div style="margin-bottom: 5px;">Billed By: ${bill.createdBy}</div>` : ''}
+          <div>${footerMsg.replace(/\n/g, '<br>')}</div>
+        </div>
       </div>
       <script>
         window.onload = function() { window.print(); window.onafterprint = function() { window.close(); }; };
@@ -188,6 +192,7 @@ export const generateThermalStandardReceipt = (bill: Bill, settings: AppSettings
           ${bill.customer ? `<div><strong>Customer:</strong> ${bill.customer.name}</div>` : ''}
           ${bill.customer?.phone ? `<div><strong>Phone:</strong> ${bill.customer.phone}</div>` : ''}
           <div><strong>Payment:</strong> ${bill.paymentMethod.toUpperCase()}</div>
+          ${bill.createdBy ? `<div><strong>Billed By:</strong> ${bill.createdBy}</div>` : ''}
         </div>
         <div class="items">
           <div class="item" style="border-bottom: 1px solid #000; padding-bottom: 5px; margin-bottom: 5px; font-weight: bold;">
@@ -232,6 +237,7 @@ export const generateThermalStandardReceipt = (bill: Bill, settings: AppSettings
           ` : ''}
         </div>
         <div class="footer">
+          ${bill.createdBy ? `<div style="margin-bottom: 8px;">Billed By: ${bill.createdBy}</div>` : ''}
           ${footerMsgHtml}
         </div>
       </div>
@@ -294,6 +300,7 @@ export const generateThermalDetailedReceipt = (bill: Bill, settings: AppSettings
           <div><strong>Date:</strong> ${new Date(bill.createdAt).toLocaleString()}</div>
           ${bill.customer ? `<div><strong>Customer:</strong> ${bill.customer.name} (${bill.customer.phone})</div>` : ''}
           <div><strong>Payment Mode:</strong> ${bill.paymentMethod.toUpperCase()}</div>
+          ${bill.createdBy ? `<div><strong>Billed By:</strong> ${bill.createdBy}</div>` : ''}
         </div>
         <div class="items">
           <div style="font-weight: bold; text-align: center; border-bottom: 1px solid #000; padding-bottom: 3px; margin-bottom: 5px;">ITEMS</div>
@@ -334,6 +341,7 @@ export const generateThermalDetailedReceipt = (bill: Bill, settings: AppSettings
           ` : ''}
         </div>
         <div class="footer">
+          ${bill.createdBy ? `<div style="margin-bottom: 5px;">Billed By: ${bill.createdBy}</div>` : ''}
           <div>${footerMsg.replace(/\n/g, '<br>')}</div>
           ${(isGstEnabled && gstNum) ? `<div style="margin-top: 3px;">GST Registration: ${gstNum}</div>` : ''}
         </div>
@@ -404,6 +412,7 @@ export const generateRegularA5Receipt = (bill: Bill, settings: AppSettings, qrDa
         <div class="bill-info">
           <div class="bill-details">
             <strong>Bill Date:</strong><br>${new Date(bill.createdAt).toLocaleDateString()}
+            ${bill.createdBy ? `<br><strong>Billed By:</strong><br>${bill.createdBy}` : ''}
           </div>
           <div class="bill-details">
             ${bill.customer ? `
@@ -455,7 +464,7 @@ export const generateRegularA5Receipt = (bill: Bill, settings: AppSettings, qrDa
         </div>
         <div class="footer">
           <div>${footerMsg.replace(/\n/g, '<br>')}</div>
-          <div>Payment Method: ${bill.paymentMethod.toUpperCase()}</div>
+          <div>Payment Method: ${bill.paymentMethod.toUpperCase()} ${bill.createdBy ? ` | Billed By: ${bill.createdBy}` : ''}</div>
         </div>
       </div>
       <script>
@@ -531,6 +540,7 @@ export const generateRegularA4Receipt = (bill: Bill, settings: AppSettings, qrDa
             <div><strong>Date:</strong> ${new Date(bill.createdAt).toLocaleDateString()}</div>
             <div><strong>Time:</strong> ${new Date(bill.createdAt).toLocaleTimeString()}</div>
             <div><strong>Payment Method:</strong> ${bill.paymentMethod.toUpperCase()}</div>
+            ${bill.createdBy ? `<div><strong>Billed By:</strong> ${bill.createdBy}</div>` : ''}
           </div>
           <div class="bill-section">
             <div class="section-title">BILL TO</div>
@@ -591,6 +601,7 @@ export const generateRegularA4Receipt = (bill: Bill, settings: AppSettings, qrDa
           ${footerMsg.replace(/\n/g, '<br>')} Please retain this invoice for your records.
         </div>
         <div class="footer">
+          ${bill.createdBy ? `<div style="margin-bottom: 5px;">Billed By: ${bill.createdBy}</div>` : ''}
           <div>This is a computer-generated invoice, no signature required.</div>
           <div style="margin-top: 10px;">Bill போடு - Professional Billing Software</div>
         </div>
@@ -669,6 +680,7 @@ export const generateRegularA4DetailedReceipt = (bill: Bill, settings: AppSettin
             <div><strong>Time:</strong> ${new Date(bill.createdAt).toLocaleTimeString()}</div>
             <div><strong>Status:</strong> ${bill.status.toUpperCase()}</div>
             <div><strong>Payment Mode:</strong> ${bill.paymentMethod.toUpperCase()}</div>
+            ${bill.createdBy ? `<div><strong>Billed By:</strong> ${bill.createdBy}</div>` : ''}
           </div>
           <div class="bill-section">
             <div class="section-title">BILL TO</div>
@@ -737,6 +749,7 @@ export const generateRegularA4DetailedReceipt = (bill: Bill, settings: AppSettin
         </div>
         <div class="footer">
           <div style="margin-bottom: 10px; font-weight: bold; font-size: 12px; color: #1a3a52;">${footerMsg.replace(/\n/g, '<br>')}</div>
+          ${bill.createdBy ? `<div style="margin-bottom: 5px;">Billed By: ${bill.createdBy}</div>` : ''}
           <div><strong>This is a computer-generated invoice. No signature required.</strong></div>
           <div style="margin-top: 10px;">Powered by Bill போடு - Professional Billing Software</div>
           <div>Generated on ${new Date().toLocaleString()}</div>
