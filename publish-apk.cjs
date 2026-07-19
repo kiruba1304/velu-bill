@@ -29,8 +29,68 @@ const releaseName = `Android Release v${version}`;
 console.log(`Preparing to compile and publish APK for version: ${version}`);
 console.log(`Tag Name: ${tagName}`);
 
-// 2. Build the Android Release APK
+// 2. Overwrite Android Icons and Splash Screen assets with assets/icon.png
 try {
+  console.log('Copying assets/icon.png to Android launcher mipmaps and splash drawables...');
+  const iconSource = path.join(__dirname, 'assets', 'icon.png');
+  const resDir = path.join(__dirname, 'android', 'app', 'src', 'main', 'res');
+
+  if (fs.existsSync(iconSource)) {
+    const targets = [
+      path.join(resDir, 'mipmap-hdpi', 'ic_launcher.png'),
+      path.join(resDir, 'mipmap-mdpi', 'ic_launcher.png'),
+      path.join(resDir, 'mipmap-xhdpi', 'ic_launcher.png'),
+      path.join(resDir, 'mipmap-xxhdpi', 'ic_launcher.png'),
+      path.join(resDir, 'mipmap-xxxhdpi', 'ic_launcher.png'),
+      
+      path.join(resDir, 'mipmap-hdpi', 'ic_launcher_round.png'),
+      path.join(resDir, 'mipmap-mdpi', 'ic_launcher_round.png'),
+      path.join(resDir, 'mipmap-xhdpi', 'ic_launcher_round.png'),
+      path.join(resDir, 'mipmap-xxhdpi', 'ic_launcher_round.png'),
+      path.join(resDir, 'mipmap-xxxhdpi', 'ic_launcher_round.png'),
+
+      path.join(resDir, 'mipmap-hdpi', 'ic_launcher_foreground.png'),
+      path.join(resDir, 'mipmap-mdpi', 'ic_launcher_foreground.png'),
+      path.join(resDir, 'mipmap-xhdpi', 'ic_launcher_foreground.png'),
+      path.join(resDir, 'mipmap-xxhdpi', 'ic_launcher_foreground.png'),
+      path.join(resDir, 'mipmap-xxxhdpi', 'ic_launcher_foreground.png'),
+
+      path.join(resDir, 'drawable', 'splash.png'),
+      path.join(resDir, 'drawable-v24', 'splash.png'),
+      path.join(resDir, 'drawable-port-hdpi', 'splash.png'),
+      path.join(resDir, 'drawable-port-mdpi', 'splash.png'),
+      path.join(resDir, 'drawable-port-xhdpi', 'splash.png'),
+      path.join(resDir, 'drawable-port-xxhdpi', 'splash.png'),
+      path.join(resDir, 'drawable-port-xxxhdpi', 'splash.png'),
+      path.join(resDir, 'drawable-land-hdpi', 'splash.png'),
+      path.join(resDir, 'drawable-land-mdpi', 'splash.png'),
+      path.join(resDir, 'drawable-land-xhdpi', 'splash.png'),
+      path.join(resDir, 'drawable-land-xxhdpi', 'splash.png'),
+      path.join(resDir, 'drawable-land-xxxhdpi', 'splash.png')
+    ];
+
+    for (const target of targets) {
+      const dir = path.dirname(target);
+      if (fs.existsSync(dir)) {
+        fs.copyFileSync(iconSource, target);
+      }
+    }
+    console.log('Android assets successfully updated.');
+  } else {
+    console.warn('Warning: assets/icon.png not found. Skipping asset generation.');
+  }
+} catch (err) {
+  console.error('Failed to copy assets/icon.png to Android resource folders:', err);
+}
+
+// 3. Build the Android Release APK
+try {
+  console.log('Compiling React frontend...');
+  execSync('npm run build', { stdio: 'inherit' });
+
+  console.log('Syncing assets to Capacitor Android...');
+  execSync('npx cap sync', { stdio: 'inherit' });
+
   console.log('Compiling signed release APK via Gradle...');
   const assembleCmd = process.platform === 'win32' 
     ? 'cd android && gradlew.bat assembleRelease' 
@@ -113,7 +173,8 @@ async function run() {
       name: releaseName,
       body: `Automated Android APK release for version ${version}.`,
       draft: false,
-      prerelease: false
+      prerelease: false,
+      make_latest: "false"
     };
 
     const releaseResponse = await makeRequest(createReleaseUrl, { method: 'POST' }, releaseBody);

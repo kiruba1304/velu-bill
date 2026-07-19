@@ -833,6 +833,75 @@ const Reports: React.FC = () => {
   }, []);
 
   const handlePrintBill = (bill: Bill) => {
+    // Check if running on Android (Capacitor or WebView)
+    const isAndroid = navigator.userAgent.toLowerCase().includes('android') || 
+                      (window as any).Capacitor?.getPlatform() === 'android';
+                      
+    if (isAndroid) {
+      const populatedBill = {
+        ...bill,
+        items: (bill.items || []).map(item => ({
+          ...item,
+          product: products.find(p => p.id === item.productId) || item.product
+        }))
+      };
+
+      const appSettingsRaw = localStorage.getItem('app_settings');
+      const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
+      
+      const settings = {
+        storeName: appSettings.storeName || 'SASHVIKA SAREES',
+        upiId: appSettings.upiId || '',
+        bankAccountNumber: appSettings.bankAccountNumber || '',
+        bankIfscCode: appSettings.bankIfscCode || '',
+        accountHolderName: appSettings.accountHolderName || '',
+        address: appSettings.address || '',
+        phone: appSettings.phone || '',
+        gstNumber: appSettings.gstNumber || '',
+        showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
+        footerMessage: appSettings.footerMessage || '',
+        logoUrl: appSettings.logoUrl || ''
+      };
+
+      const qrData = generateQRData(populatedBill, settings);
+      const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
+
+      let receiptHTML = '';
+
+      switch (selectedTemplate) {
+        case 'thermal-compact':
+          receiptHTML = generateThermalCompactReceipt(populatedBill, settings, qrData);
+          break;
+        case 'thermal-detailed':
+          receiptHTML = generateThermalDetailedReceipt(populatedBill, settings, qrData);
+          break;
+        case 'regular-a5':
+          receiptHTML = generateRegularA5Receipt(populatedBill, settings, qrData);
+          break;
+        case 'regular-a4':
+          receiptHTML = generateRegularA4Receipt(populatedBill, settings, qrData);
+          break;
+        case 'regular-a4-detailed':
+          receiptHTML = generateRegularA4DetailedReceipt(populatedBill, settings, qrData);
+          break;
+        case 'thermal-standard':
+        default:
+          receiptHTML = generateThermalStandardReceipt(populatedBill, settings, qrData);
+      }
+
+      const blob = new Blob([receiptHTML], { type: 'text/html;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Invoice_${bill.billNumber}.html`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      alert('Invoice HTML downloaded to your device downloads folder.');
+      return;
+    }
+
     const populatedBill = {
       ...bill,
       items: (bill.items || []).map(item => ({

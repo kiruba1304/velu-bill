@@ -36,6 +36,25 @@ function AppContent() {
   const [isClosing, setIsClosing] = useState(false);
   const [closingCountdown, setClosingCountdown] = useState(15);
 
+  const [showSplash, setShowSplash] = useState(true);
+  const [splashFade, setSplashFade] = useState(false);
+
+  useEffect(() => {
+    const fadeTimer = setTimeout(() => {
+      setSplashFade(true);
+    }, 2000);
+
+    const removeTimer = setTimeout(() => {
+      setShowSplash(false);
+    }, 2500);
+
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(removeTimer);
+    };
+  }, []);
+
+
   const [updateStatus, setUpdateStatus] = useState<'idle' | 'checking' | 'available' | 'downloading' | 'ready' | 'error'>('idle');
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateVersion, setUpdateVersion] = useState('');
@@ -274,6 +293,40 @@ function AppContent() {
 
   return (
     <div className="app-root flex flex-col md:flex-row h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-slate-100 to-blue-50 text-slate-900">
+      {showSplash && (
+        <div 
+          className={`fixed inset-0 z-[10000] flex flex-col items-center justify-center bg-slate-900 transition-opacity duration-500 ${
+            splashFade ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          <div className="flex flex-col items-center gap-4">
+            <img 
+              src="/logo.png" 
+              alt="Logo" 
+              className="h-28 w-28 rounded-2xl shadow-xl animate-fade-in-scale" 
+            />
+            <h1 className="text-2xl font-bold tracking-wider text-white animate-pulse">
+              Bill போடு
+            </h1>
+          </div>
+          
+          <style>{`
+            @keyframes fadeInScale {
+              0% {
+                opacity: 0;
+                transform: scale(0.8);
+              }
+              100% {
+                opacity: 1;
+                transform: scale(1);
+              }
+            }
+            .animate-fade-in-scale {
+              animation: fadeInScale 0.8s ease-out forwards;
+            }
+          `}</style>
+        </div>
+      )}
       {/* Mobile Top Header */}
       {!isFullscreen && (
         <header className="flex items-center justify-between border-b border-white/10 bg-slate-950 px-4 py-3 text-white md:hidden shrink-0">
