@@ -13,7 +13,8 @@ import {
   PieChart,
   LineChart,
   Target,
-  Printer
+  Printer,
+  Trash2
 } from 'lucide-react';
 import { useBills, useProducts, useCustomers } from '../hooks/useDatabase';
 import {
@@ -349,7 +350,7 @@ const Reports: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
 
-  const { bills, refreshBills } = useBills();
+  const { bills, refreshBills, deleteBill } = useBills();
   const { products } = useProducts();
   const { customers } = useCustomers();
 
@@ -967,6 +968,21 @@ const Reports: React.FC = () => {
     if (previewWindow) {
       previewWindow.document.write(previewHTML);
       previewWindow.document.close();
+    }
+  };
+
+  const handleDeleteBill = async (id: number, billNumber: string) => {
+    if (confirm(`Are you sure you want to permanently delete bill ${billNumber}? This will revert any stock changes and credit balances associated with it.`)) {
+      try {
+        const success = await deleteBill(id);
+        if (success) {
+          alert('Bill deleted successfully.');
+        } else {
+          alert('Failed to delete bill.');
+        }
+      } catch (err: any) {
+        alert('Error deleting bill: ' + (err.message || String(err)));
+      }
     }
   };
 
@@ -1593,6 +1609,13 @@ const Reports: React.FC = () => {
                               title="Print Bill"
                             >
                               <Printer className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteBill(bill.id, bill.billNumber)}
+                              className="text-red-500 hover:text-red-700 hover:border-red-300 p-1.5 rounded-lg border border-red-200 bg-white shadow-sm inline-flex items-center"
+                              title="Delete Bill"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
                             </button>
                           </td>
                         </tr>

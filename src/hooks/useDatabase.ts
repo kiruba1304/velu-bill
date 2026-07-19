@@ -153,6 +153,10 @@ class BrowserDatabase {
     return await this.getElectronApi().dbCall('updateBill', billNumber, updates);
   }
 
+  async deleteBill(id: number): Promise<boolean> {
+    return await this.getElectronApi().dbCall('deleteBill', id);
+  }
+
   async getTransactions(branchId?: number): Promise<InventoryTransaction[]> {
     return await this.getElectronApi().dbCall('getTransactions', branchId);
   }
@@ -874,6 +878,19 @@ export const useBills = (branchId?: number) => {
     }
   };
 
+  const deleteBill = async (id: number) => {
+    try {
+      const success = await db.deleteBill(id);
+      if (success) {
+        await loadBills();
+      }
+      return success;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete bill');
+      throw err;
+    }
+  };
+
   const getBillsByCustomer = (customerId: number) => {
     return bills.filter(b => b.customerId === customerId);
   };
@@ -906,6 +923,7 @@ export const useBills = (branchId?: number) => {
     error,
     addBill,
     updateBill,
+    deleteBill,
     refreshBills: loadBills,
     getBillsByCustomer,
   };

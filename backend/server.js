@@ -1,3 +1,5 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
 const express = require('express');
 const cors = require('cors');
 const mysql = require('mysql2/promise');
@@ -21,10 +23,10 @@ let dbConfig = null;
 
 async function initDb() {
   const config = {
-    host: 'mysql-env-wxixfkg1yk.ap-south-1a.lb.nimbuz.tech',
-    port: 31885,
-    user: 'root',
-    password: 'visH325',
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT) || 3306,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
     waitForConnections: true,
     connectionLimit: 10,
     maxIdle: 5,
@@ -43,7 +45,7 @@ async function initDb() {
   } catch (error) {
     console.error('Primary DB connection failed. Trying fallback password:', error.message);
     try {
-      config.password = 'visH$325';
+      config.password = process.env.DB_PASSWORD_FALLBACK;
       connection = await mysql.createConnection(config);
       console.log('Connected to MySQL server with fallback password.');
     } catch (fallbackError) {
@@ -1453,6 +1455,86 @@ async function _executeDbCallInner(method, args) {
 
       const [res] = await pool.query(`UPDATE Bills SET ${fields.join(', ')} WHERE billNumber = ?`, values);
       return res.affectedRows > 0;
+    }
+    case 'deleteBill': {
+      const [billId] = args;
+      const conn = await pool.getConnection();
+      try {
+        await conn.beginTransaction();
+
+        // 1. Fetch the bill details
+        const [billRows] = await conn.query('SELECT * FROM Bills WHERE id = ?', [billId]);
+        if (billRows.length === 0) {
+          throw new Error('Bill not found');
+        }
+        const bill = billRows[0];
+
+        // 2. Fetch the bill items
+        const [itemRows] = await conn.query('SELECT * FROM BillItems WHERE billId = ?', [billId]);
+
+        // 3. Revert stock count if it's not a seller bill
+        if (bill.invoiceType !== 'seller_bill') {
+          for (const item of itemRows) {
+            if (item.productId === -888) {
+              // Showroom Bike sale. Revert bike status and service reminders.
+              const billDate = bill.createdAt.split('T')[0];
+              const [bikesToRevert] = await conn.query(
+                'SELECT id FROM Bikes WHERE soldToCustomerId = ? AND saleDate = ?',
+                [bill.customerId, billDate]
+              );
+              for (const b of bikesToRevert) {
+                await conn.query('UPDATE Bikes SET status = \'available\', soldToCustomerId = NULL, saleDate = NULL WHERE id = ?', [b.id]);
+                await conn.query('DELETE FROM BikeServiceReminders WHERE bikeId = ?', [b.id]);
+              }
+            } else if (item.productId === -999) {
+              // Workshop Service card. Revert status and isBilled.
+              const [servicesToRevert] = await conn.query(
+                'SELECT id FROM Services WHERE customerId = ? AND isBilled = 1',
+                [bill.customerId]
+              );
+              for (const s of servicesToRevert) {
+                await conn.query('UPDATE Services SET status = \'pending\', isBilled = 0 WHERE id = ?', [s.id]);
+              }
+            } else {
+              // Standard Product
+              await conn.query('UPDATE Products SET count = count + ? WHERE id = ?', [item.quantity, item.productId]);
+            }
+          }
+        }
+
+        // 4. Delete related inventory transactions
+        await conn.query('DELETE FROM InventoryTransactions WHERE billId = ?', [billId]);
+
+        // 5. If it's a credit bill, adjust customer credit balance and history
+        if (bill.customerId && bill.paymentMethod === 'credit') {
+          const [custRows] = await conn.query('SELECT creditBalance, creditHistory FROM Customers WHERE id = ?', [bill.customerId]);
+          if (custRows.length > 0) {
+            const customer = custRows[0];
+            let newBalance = customer.creditBalance || 0;
+            let history = parseJsonField(customer.creditHistory);
+
+            const netOutstanding = (bill.finalAmount || 0) - (bill.currentlyPaid || 0);
+            newBalance = Math.max(0, newBalance - netOutstanding);
+
+            // Filter out history entries related to this bill
+            history = history.filter(h => !h.description?.includes(bill.billNumber));
+
+            await conn.query('UPDATE Customers SET creditBalance = ?, creditHistory = ? WHERE id = ?', [newBalance, JSON.stringify(history), bill.customerId]);
+          }
+        }
+
+        // 6. Delete bill items and the bill
+        await conn.query('DELETE FROM BillItems WHERE billId = ?', [billId]);
+        const [res] = await conn.query('DELETE FROM Bills WHERE id = ?', [billId]);
+
+        await conn.commit();
+        return res.affectedRows > 0;
+      } catch (err) {
+        await conn.rollback();
+        throw err;
+      } finally {
+        conn.release();
+      }
     }
     case 'getBillsByCustomer': {
       const [customerId, branchId] = args;

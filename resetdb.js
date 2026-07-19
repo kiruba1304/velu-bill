@@ -1,11 +1,13 @@
 // Node.js script to reset MySQL database tables using mysql2 dependency
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const mysql = require('mysql2/promise');
 
 const config = {
-  host: 'mysql-env-wxixfkg1yk.ap-south-1a.lb.nimbuz.tech',
-  port: 31885,
-  user: 'root',
-  password: 'visH325',
+  host: process.env.DB_HOST,
+  port: parseInt(process.env.DB_PORT) || 3306,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
   database: 'samdb',
   connectTimeout: 10000
 };
@@ -43,7 +45,7 @@ async function resetDatabase() {
   } catch (error) {
     console.log('Primary connection failed. Trying fallback database password...');
     try {
-      config.password = 'visH$325';
+      config.password = process.env.DB_PASSWORD_FALLBACK;
       connection = await mysql.createConnection(config);
     } catch (fallbackError) {
       console.error('All connection attempts failed:', fallbackError.message);

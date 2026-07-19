@@ -1,11 +1,13 @@
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 const mysql = require('mysql2/promise');
 
 async function check() {
   const connection = await mysql.createConnection({
-    host: 'mysql-env-wxixfkg1yk.ap-south-1a.lb.nimbuz.tech',
-    port: 31885,
-    user: 'root',
-    password: 'visH325',
+    host: process.env.DB_HOST,
+    port: parseInt(process.env.DB_PORT) || 3306,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
     database: 'samdb'
   });
 
