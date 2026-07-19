@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Capacitor } from '@capacitor/core';
+import packageJson from '../package.json';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
 import Products from './pages/Products';
@@ -38,6 +40,56 @@ function AppContent() {
   const [updateProgress, setUpdateProgress] = useState(0);
   const [updateVersion, setUpdateVersion] = useState('');
   const [updateError, setUpdateError] = useState('');
+  const [androidUpdateUrl, setAndroidUpdateUrl] = useState('');
+
+  useEffect(() => {
+    // Only run update checker on Android
+    if (Capacitor.getPlatform() !== 'android') return;
+
+    const checkAndroidUpdate = async () => {
+      try {
+        const response = await fetch('https://api.github.com/repos/kiruba1304/velu-bill/releases');
+        if (!response.ok) return;
+        const releases = await response.json();
+        
+        // Find the latest release with tag name starting with 'android-v'
+        const latestAndroidRelease = releases.find((r: any) => r.tag_name && r.tag_name.startsWith('android-v'));
+        if (!latestAndroidRelease) return;
+
+        // Parse version numbers (tag name is android-v1.0.8, we get 1.0.8)
+        const latestVersion = latestAndroidRelease.tag_name.replace('android-v', '');
+        const currentVersion = packageJson.version;
+
+        // Version comparison helper
+        const isNewer = (latest: string, current: string) => {
+          const lParts = latest.split('.').map(Number);
+          const cParts = current.split('.').map(Number);
+          for (let i = 0; i < Math.max(lParts.length, cParts.length); i++) {
+            const l = lParts[i] || 0;
+            const c = cParts[i] || 0;
+            if (l > c) return true;
+            if (l < c) return false;
+          }
+          return false;
+        };
+
+        if (isNewer(latestVersion, currentVersion)) {
+          // Find the APK asset
+          const apkAsset = latestAndroidRelease.assets?.find((a: any) => a.name === 'app-release.apk');
+          if (apkAsset && apkAsset.browser_download_url) {
+            setUpdateVersion(latestVersion);
+            setAndroidUpdateUrl(apkAsset.browser_download_url);
+            setUpdateStatus('available');
+          }
+        }
+      } catch (err) {
+        console.error('Android update check failed:', err);
+      }
+    };
+
+    // Run check on startup
+    checkAndroidUpdate();
+  }, []);
 
   useEffect(() => {
     const api = (window as any).electronAPI;
@@ -362,7 +414,7 @@ function AppContent() {
       )}
 
       {/* Auto-updater Banner */}
-      {updateStatus !== 'idle' && updateStatus !== 'checking' && updateStatus !== 'available' && (
+      {updateStatus !== 'idle' && updateStatus !== 'checking' && (updateStatus !== 'available' || Capacitor.getPlatform() === 'android') && (
         <div className="fixed bottom-6 right-6 z-[9999] w-80 rounded-2xl border border-slate-200 bg-white p-4 shadow-2xl dark:border-slate-800 dark:bg-slate-950 text-slate-900 dark:text-white transition-all duration-300 transform translate-y-0 opacity-100 flex flex-col gap-3">
           {updateStatus === 'downloading' && (
             <>
@@ -405,6 +457,38 @@ function AppContent() {
                 >
                   <RefreshCw className="h-4 w-4 animate-spin" style={{ animationDuration: '3s' }} />
                   Restart & Update
+                </button>
+                <button
+                  onClick={() => setUpdateStatus('idle')}
+                  className="w-full text-center text-xs text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 font-medium py-1 transition-colors"
+                >
+                  Later
+                </button>
+              </div>
+            </>
+          )}
+
+          {updateStatus === 'available' && Capacitor.getPlatform() === 'android' && (
+            <>
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-600 dark:bg-blue-950/50 dark:text-blue-400">
+                  <Download className="h-5 w-5" />
+                </div>
+                <div>
+                  <h4 className="text-sm font-semibold">New Update Available!</h4>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Android Version {updateVersion} is ready.</p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => {
+                    window.open(androidUpdateUrl, '_system');
+                    setUpdateStatus('idle');
+                  }}
+                  className="w-full flex items-center justify-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-blue-500 shadow-lg shadow-blue-500/20 active:scale-[0.98] transition-all"
+                >
+                  <Download className="h-4 w-4" />
+                  Download & Install
                 </button>
                 <button
                   onClick={() => setUpdateStatus('idle')}

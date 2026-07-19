@@ -20,7 +20,8 @@
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "seed": "ts-node src/database/seed.ts",
-    "publish:win": "npm run clean && npm run build && npx dotenv-cli -e .env -- electron-builder --win -p always"
+    "publish:win": "npm run clean && npm run build && npx dotenv-cli -e .env -- electron-builder --win -p always",
+    "publish:apk": "node publish-apk.js"
   },
   "build": {
     "appId": "com.billpodu.app",

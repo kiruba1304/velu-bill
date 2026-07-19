@@ -566,7 +566,10 @@ export default function Attendance() {
           setCameras(devices);
           setSelectedCameraId(prev => {
             const exists = devices.some(d => d.id === prev);
-            return exists ? prev : devices[0].id;
+            if (exists) return prev;
+            // Prefer back camera if labeled, otherwise fallback to empty string to use { facingMode: "environment" }
+            const backCamera = devices.find(d => d.label?.toLowerCase().includes('back') || d.label?.toLowerCase().includes('rear'));
+            return backCamera ? backCamera.id : (devices.length > 1 ? '' : devices[0].id);
           });
         }
       }).catch(err => {
