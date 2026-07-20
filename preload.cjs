@@ -24,6 +24,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onUpdateDownloaded: (callback) => ipcRenderer.on('update-downloaded', (event, info) => callback(info)),
   onUpdateError: (callback) => ipcRenderer.on('update-error', (event, err) => callback(err)),
   restartAndInstall: () => ipcRenderer.send('restart-and-install'),
-  dbCall: (method, ...args) => ipcRenderer.invoke('db-call', { method, args })
+  dbCall: (method, ...args) => ipcRenderer.invoke('db-call', { method, args }),
+  getWhatsAppStatus: () => ipcRenderer.invoke('get-whatsapp-status'),
+  initWhatsApp: () => ipcRenderer.invoke('init-whatsapp'),
+  disconnectWhatsApp: () => ipcRenderer.invoke('disconnect-whatsapp'),
+  sendWhatsAppAuto: (phone, text, billNumber, customerName) => ipcRenderer.invoke('send-whatsapp-auto', { phone, text, billNumber, customerName }),
+  onWhatsAppStatus: (callback) => ipcRenderer.on('whatsapp-status', (event, data) => callback(data)),
+  onWhatsAppQr: (callback) => ipcRenderer.on('whatsapp-qr', (event, data) => callback(data))
 });
 

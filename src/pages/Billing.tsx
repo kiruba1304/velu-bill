@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import { Capacitor } from '@capacitor/core';
 import {
   Plus,
   Minus,
@@ -23,6 +24,8 @@ import {
   generateRegularA4DetailedReceipt
 } from '../utils/templateGenerator';
 import { getStoreSettings } from '../utils/getStoreSettings';
+import { downloadInvoicePdf } from '../utils/downloadInvoicePdf';
+import { generateWhatsAppMessage } from '../utils/generateWhatsAppMessage';
 
 interface BillItemWithProduct extends BillItem {
   product: Product;
@@ -543,11 +546,20 @@ const Billing: React.FC = () => {
         receiptHTML = generateThermalStandardReceipt(bill, settings, qrData);
     }
 
+    if (Capacitor.getPlatform() === 'android') {
+      try { (printWindow as any).close(); } catch { }
+      downloadInvoicePdf(bill, branches, activeBranchId);
+      return;
+    }
     const api = (window as any).electronAPI;
+    let pdfPromise = Promise.resolve(true);
     if (api?.saveBillPdf) {
       const customerName = bill.customer?.name || walkInName;
-      api.saveBillPdf(bill.billNumber, receiptHTML, customerName)
-        .catch((err: any) => console.error("Failed to auto-save PDF bill:", err));
+      pdfPromise = api.saveBillPdf(bill.billNumber, receiptHTML, customerName)
+        .catch((err: any) => {
+          console.error("Failed to auto-save PDF bill:", err);
+          return false;
+        });
     }
 
     if (api?.printHtml) {
@@ -562,11 +574,9 @@ const Billing: React.FC = () => {
           }
           alert('Print failed: ' + errMsg);
         });
-      return;
     }
 
-    (printWindow as any).document.write(receiptHTML);
-    (printWindow as any).document.close();
+    return pdfPromise;
   };
 
   const performCheckout = async (currentlyPayAmount: number = 0) => {
@@ -576,6 +586,12 @@ const Billing: React.FC = () => {
       const previousBalance = selectedCustomer?.creditBalance || 0;
       const totalOutstanding = previousBalance + totals.finalTotal;
       const netBalance = Math.max(0, totalOutstanding - currentlyPayAmount);
+
+      const resolvedCustomer = selectedCustomer || (
+        (walkInName.trim() || walkInPhone.trim())
+          ? ({ id: 0, name: walkInName.trim() || 'Walk-in Customer', phone: walkInPhone.trim(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() } as Customer)
+          : undefined
+      );
 
       const tempBill: Bill = {
         id: 0,
@@ -589,7 +605,7 @@ const Billing: React.FC = () => {
         status: 'completed',
         createdAt: billCreatedAt,
         updatedAt: new Date().toISOString(),
-        customer: selectedCustomer || undefined,
+        customer: resolvedCustomer,
         items: billItems.map(item => ({
           ...item,
           gst: gstBillingEnabled ? item.gst : 0
@@ -670,7 +686,23 @@ const Billing: React.FC = () => {
         await refreshCustomerPurchaseStats(editingBillMeta.customerId);
       }
 
-      printReceipt(tempBill);
+      const pdfSavingPromise = printReceipt(tempBill);
+
+      // Trigger background WhatsApp Web Auto-Send if customer phone is present
+      const customerPhone = tempBill.customer?.phone || walkInPhone;
+      if (customerPhone) {
+        const api = (window as any).electronAPI;
+        if (api?.sendWhatsAppAuto) {
+          const { text, customerName } = generateWhatsAppMessage(tempBill, branches, activeBranchId, products);
+          Promise.resolve(pdfSavingPromise).then(() => {
+            setTimeout(() => {
+              api.sendWhatsAppAuto(customerPhone, text, tempBill.billNumber, customerName)
+                .then(() => console.log('WhatsApp invoice auto-sent successfully with PDF!'))
+                .catch((err: any) => console.log('WhatsApp auto-send info:', err?.message || String(err)));
+            }, 300);
+          });
+        }
+      }
  
       // Auto-complete the associated workshop service card status in the database
       if (loadedServiceId) {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Save, Database, Upload, Users, UserPlus, Edit, Trash2, Building2, PhoneCall } from 'lucide-react';
+import { Download, Save, Database, Upload, Users, UserPlus, Edit, Trash2, Building2, PhoneCall, MessageSquare, RefreshCw } from 'lucide-react';
 import { useProducts, useCustomers, useBills, useTransactions, useDatabase, useCategories } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
 
@@ -44,6 +44,66 @@ const Settings: React.FC = () => {
   const [printers, setPrinters] = useState<any[]>([]);
   const [selectedReceiptPrinter, setSelectedReceiptPrinter] = useState<string>(() => localStorage.getItem('receipt_printer_name') || '');
   const [selectedLabelPrinter, setSelectedLabelPrinter] = useState<string>(() => localStorage.getItem('label_printer_name') || '');
+
+  // WhatsApp Web Automation State
+  const [waStatus, setWaStatus] = useState<string>('disconnected');
+  const [waQrUrl, setWaQrUrl] = useState<string>('');
+  const [waUserInfo, setWaUserInfo] = useState<any>(null);
+
+  useEffect(() => {
+    const api = (window as any).electronAPI;
+    if (!api || !api.getWhatsAppStatus) return;
+
+    api.getWhatsAppStatus().then((res: any) => {
+      if (res) {
+        setWaStatus(res.status || 'disconnected');
+        setWaQrUrl(res.qrUrl || '');
+        setWaUserInfo(res.userInfo || null);
+        if (res.status === 'disconnected' && api.initWhatsApp) {
+          api.initWhatsApp();
+        }
+      }
+    });
+
+    if (api.onWhatsAppStatus) {
+      api.onWhatsAppStatus((data: any) => {
+        setWaStatus(data.status || 'disconnected');
+        if (data.qrUrl) setWaQrUrl(data.qrUrl);
+        if (data.userInfo !== undefined) setWaUserInfo(data.userInfo);
+      });
+    }
+
+    if (api.onWhatsAppQr) {
+      api.onWhatsAppQr((data: any) => {
+        if (data.qrUrl) {
+          setWaQrUrl(data.qrUrl);
+          setWaStatus('qr_ready');
+        }
+      });
+    }
+  }, []);
+
+  const handlePairWhatsApp = () => {
+    const api = (window as any).electronAPI;
+    if (api && api.initWhatsApp) {
+      setWaStatus('loading');
+      api.initWhatsApp();
+    } else {
+      alert('WhatsApp Web automation is supported on Desktop Electron app.');
+    }
+  };
+
+  const handleDisconnectWhatsApp = async () => {
+    const api = (window as any).electronAPI;
+    if (api && api.disconnectWhatsApp) {
+      if (confirm('Are you sure you want to disconnect WhatsApp automation?')) {
+        await api.disconnectWhatsApp();
+        setWaStatus('disconnected');
+        setWaQrUrl('');
+        setWaUserInfo(null);
+      }
+    }
+  };
 
   const { isSuperAdmin, isAdmin, isSubAdmin, currentUser, branches, refreshBranches } = useAuth();
   const [users, setUsers] = useState<any[]>([]);
@@ -495,33 +555,6 @@ const Settings: React.FC = () => {
     alert('Printer settings saved successfully!');
   };
 
-  const testEcommerceConnection = async () => {
-    if (!ecommerceApiUrl || !ecommerceApiKey) {
-      alert('Please fill in both E-Commerce URL and API Key.');
-      return;
-    }
-    try {
-      const response = await fetch(`${ecommerceApiUrl.replace(/\/$/, '')}/billing/sync/validate`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ api_key: ecommerceApiKey })
-      });
-      const resData = await response.json();
-      if (response.ok && resData.success) {
-        alert(`Connection successful! Connected to shop: ${resData.shop_name}`);
-      } else {
-        alert(`Connection failed: ${resData.error || 'Unknown error'}`);
-      }
-    } catch (e: any) {
-      alert(`Network error connecting to E-Commerce site: ${e.message || String(e)}`);
-    }
-  };
-
-  const triggerEcommerceSync = () => {
-    window.dispatchEvent(new Event('trigger-ecommerce-sync'));
-    alert('Synchronization process triggered in background...');
-  };
-
   const saveSettings = async () => {
     const existingRaw = localStorage.getItem('app_settings');
     const existing = existingRaw ? JSON.parse(existingRaw) : {};
@@ -949,55 +982,95 @@ const Settings: React.FC = () => {
           </div>
         </div>
 
+        {/* WhatsApp Web Automation Card */}
         <div className="card border border-white/60 bg-white/85 shadow-soft">
-          <h2 className="mb-4 text-xl font-semibold text-slate-900">E-Commerce Integration Sync</h2>
-          <div className="space-y-3">
+          <div className="flex items-center justify-between mb-4">
             <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Website Sync Endpoint URL</label>
-              <input 
-                type="text" 
-                value={ecommerceApiUrl} 
-                onChange={(e) => setEcommerceApiUrl(e.target.value)} 
-                className="input w-full" 
-                placeholder="e.g., http://localhost:5000/api" 
-              />
-              <p className="mt-1 text-xs text-slate-500">Your online shop backend base API URL.</p>
+              <h2 className="text-xl font-semibold text-slate-900 flex items-center gap-2">
+                <MessageSquare className="h-5 w-5 text-emerald-600" />
+                WhatsApp Web Automation (Auto-Send Invoices)
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Pair your WhatsApp number once to automatically send bill breakdowns & PDF attachments to customers on checkout.
+              </p>
             </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Billing Sync API Key</label>
-              <input 
-                type="password" 
-                value={ecommerceApiKey} 
-                onChange={(e) => setEcommerceApiKey(e.target.value)} 
-                className="input w-full" 
-                placeholder="Paste the generated key from website admin..." 
-              />
-              <p className="mt-1 text-xs text-slate-500">Generate this key in the Store settings of your website admin panel.</p>
-            </div>
-            <div>
-              <label className="mb-1 block text-sm font-medium text-slate-700">Sync Interval (seconds)</label>
-              <input 
-                type="number" 
-                min="5" 
-                value={ecommerceSyncInterval} 
-                onChange={(e) => setEcommerceSyncInterval(parseInt(e.target.value) || 10)} 
-                className="input w-full" 
-                placeholder="e.g., 10" 
-              />
-              <p className="mt-1 text-xs text-slate-500">How frequently the app automatically syncs with the website (minimum 5 seconds).</p>
-            </div>
-            <div className="flex flex-wrap gap-2 pt-2">
-              <button onClick={testEcommerceConnection} className="btn-secondary px-4 py-2 text-sm">
-                Test Connection
-              </button>
-              <button onClick={triggerEcommerceSync} className="btn-primary inline-flex items-center gap-2 px-4 py-2 text-sm">
-                Sync Now
-              </button>
-              <button onClick={saveSettings} className="btn-secondary px-4 py-2 text-sm">
-                Save Sync Details
-              </button>
+            <div className="shrink-0">
+              {waStatus === 'connected' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700 border border-emerald-200">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-ping" />
+                  Connected {waUserInfo?.wid ? `(+${waUserInfo.wid})` : ''}
+                </span>
+              )}
+              {waStatus === 'qr_ready' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-3 py-1 text-xs font-bold text-amber-700 border border-amber-200">
+                  <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+                  Scan QR Code
+                </span>
+              )}
+              {waStatus === 'loading' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 border border-blue-200">
+                  <RefreshCw className="h-3 w-3 animate-spin" />
+                  Initializing...
+                </span>
+              )}
+              {waStatus === 'disconnected' && (
+                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200">
+                  Disconnected
+                </span>
+              )}
             </div>
           </div>
+
+          {waStatus === 'qr_ready' && waQrUrl && (
+            <div className="my-4 flex flex-col items-center justify-center rounded-2xl border border-amber-200 bg-amber-50/50 p-6 text-center animate-in fade-in">
+              <h4 className="text-sm font-bold text-amber-900 mb-2">Scan QR Code with WhatsApp</h4>
+              <div className="p-3 bg-white rounded-2xl shadow-md border border-slate-200 mb-3">
+                <img src={waQrUrl} alt="WhatsApp QR Code" className="h-48 w-48 object-contain" />
+              </div>
+              <ol className="text-xs text-amber-800 text-left space-y-1 max-w-xs font-medium">
+                <li>1. Open <strong>WhatsApp</strong> on your phone</li>
+                <li>2. Tap <strong>Settings / Menu</strong> ➔ <strong>Linked Devices</strong></li>
+                <li>3. Tap <strong>Link a Device</strong> and point camera at this QR code</li>
+              </ol>
+            </div>
+          )}
+
+          {waStatus === 'connected' && (
+            <div className="my-4 rounded-2xl border border-emerald-200 bg-emerald-50/50 p-4 text-emerald-900 text-sm flex items-center justify-between">
+              <div>
+                <p className="font-bold">WhatsApp Automation Active</p>
+                <p className="text-xs text-emerald-700 mt-0.5">
+                  Bills created at checkout will be transmitted directly to customer WhatsApp numbers in the background.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleDisconnectWhatsApp}
+                className="rounded-xl border border-red-200 bg-white px-3 py-1.5 text-xs font-bold text-red-600 hover:bg-red-50 transition-colors shadow-sm"
+              >
+                Disconnect
+              </button>
+            </div>
+          )}
+
+          {waStatus === 'disconnected' && (
+            <div className="my-4 rounded-2xl border border-slate-200 bg-slate-50 p-4 text-slate-700 text-sm flex items-center justify-between">
+              <div>
+                <p className="font-bold">Not Paired</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Click Pair WhatsApp below to generate a QR code and connect your WhatsApp account.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handlePairWhatsApp}
+                className="flex items-center gap-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white hover:bg-emerald-500 shadow-md shadow-emerald-500/20 transition-all"
+              >
+                <MessageSquare className="h-4 w-4" />
+                Pair WhatsApp
+              </button>
+            </div>
+          )}
         </div>
 
         {isSuperAdmin && (

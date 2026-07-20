@@ -1,7 +1,14 @@
 import React, { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { X, Copy, Mail, Share2, Check, FileText, FolderOpen } from 'lucide-react';
+import { Capacitor } from '@capacitor/core';
+import { Share as CapacitorShare } from '@capacitor/share';
+import { X, Copy, Mail, Share2, Check, FileText, FolderOpen, Download } from 'lucide-react';
 import { Bill } from '../types';
+import { downloadInvoicePdf } from '../utils/downloadInvoicePdf';
+import { getStoreSettings } from '../utils/getStoreSettings';
+import { generateWhatsAppMessage } from '../utils/generateWhatsAppMessage';
+import { useAuth } from '../hooks/useAuth';
+import { useProducts } from '../hooks/useDatabase';
 
 interface ShareModalProps {
   bill: Bill | null;
@@ -11,6 +18,8 @@ interface ShareModalProps {
 export const ShareModal: React.FC<ShareModalProps> = ({ bill, onClose }) => {
   const [copied, setCopied] = useState(false);
   const [tipMessage, setTipMessage] = useState('');
+  const { activeBranchId, branches } = useAuth();
+  const { products } = useProducts();
 
   if (!bill) return null;
 
@@ -18,22 +27,41 @@ export const ShareModal: React.FC<ShareModalProps> = ({ bill, onClose }) => {
   const customerPhone = bill.customer?.phone || '';
   const customerEmail = bill.customer?.email || '';
 
+  const storeSettings = getStoreSettings(bill.branchId, branches, activeBranchId);
+  const storeName = storeSettings.storeName;
+
+  const { text: formattedMessageText } = generateWhatsAppMessage(bill, branches, activeBranchId, products);
+
   const generateWhatsAppLink = () => {
     const cleanPhone = customerPhone.replace(/\D/g, '');
     const finalPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
-    const text = `Hello ${customerName},\n\nYour invoice *${bill.billNumber}* is ready.\n\n*Summary:*\n- Total Amount: ₹${bill.finalAmount.toFixed(2)}\n- Payment Method: ${bill.paymentMethod.toUpperCase()}\n- Date: ${new Date(bill.createdAt).toLocaleDateString()}\n\nThank you for shopping with us!`;
-    return `https://api.whatsapp.com/send?phone=${finalPhone}&text=${encodeURIComponent(text)}`;
+    return `https://api.whatsapp.com/send?phone=${finalPhone}&text=${encodeURIComponent(formattedMessageText)}`;
   };
 
   const generateEmailLink = () => {
-    const subject = `Invoice ${bill.billNumber} from SASHVIKA SAREES`;
-    const body = `Hello ${customerName},\n\nYour invoice ${bill.billNumber} is ready.\n\nSummary:\n- Total Amount: Rs. ${bill.finalAmount.toFixed(2)}\n- Payment Method: ${bill.paymentMethod.toUpperCase()}\n- Date: ${new Date(bill.createdAt).toLocaleDateString()}\n\nThank you for your business!`;
-    return `mailto:${customerEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    const subject = `Invoice ${bill.billNumber} from ${storeName}`;
+    return `mailto:${customerEmail}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(formattedMessageText)}`;
   };
 
   const generateClipboardText = () => {
-    const itemsText = bill.items?.map(it => `- ${it.product?.name || 'Item'} (Qty: ${it.quantity})`).join('\n') || '';
-    return `Invoice: ${bill.billNumber}\nCustomer: ${customerName}\nDate: ${new Date(bill.createdAt).toLocaleDateString()}\n\nItems:\n${itemsText}\n\nTotal Discount: ₹${bill.totalDiscount.toFixed(2)}\nTotal GST: ₹${bill.totalGst.toFixed(2)}\nFinal Amount: ₹${bill.finalAmount.toFixed(2)}\nPayment Method: ${bill.paymentMethod.toUpperCase()}`;
+    return formattedMessageText;
+  };
+
+  const handleWhatsAppClick = async (e: React.MouseEvent) => {
+    handleShareClick();
+    const api = (window as any).electronAPI;
+    if (api && api.sendWhatsAppAuto && customerPhone) {
+      try {
+        setTipMessage('Sending WhatsApp message & PDF in background...');
+        await api.sendWhatsAppAuto(customerPhone, formattedMessageText, bill.billNumber, customerName);
+        setTipMessage('✅ Sent automatically via WhatsApp!');
+        setTimeout(() => setTipMessage(''), 3000);
+        e.preventDefault();
+        return;
+      } catch (err: any) {
+        console.log('Auto WA send fallback:', err?.message || String(err));
+      }
+    }
   };
 
   const handleCopy = () => {
@@ -43,18 +71,43 @@ export const ShareModal: React.FC<ShareModalProps> = ({ bill, onClose }) => {
   };
 
   const handleNativeShare = async () => {
+    const textData = generateClipboardText();
+
+    // 1. Android APK or native mobile platform using Capacitor Share plugin
+    if (Capacitor.getPlatform() === 'android' || Capacitor.isNativePlatform()) {
+      try {
+        await CapacitorShare.share({
+          title: `Invoice ${bill.billNumber} - ${storeName}`,
+          text: textData,
+          dialogTitle: 'Share Invoice'
+        });
+        return;
+      } catch (err) {
+        console.log('Capacitor share canceled or failed:', err);
+      }
+    }
+
+    // 2. Web browser navigator.share fallback
     if (navigator.share) {
       try {
         await navigator.share({
-          title: `Invoice ${bill.billNumber}`,
-          text: `Invoice ${bill.billNumber} for ₹${bill.finalAmount.toFixed(2)} - ${customerName}`,
-          url: window.location.href
+          title: `Invoice ${bill.billNumber} - ${storeName}`,
+          text: textData,
         });
+        return;
       } catch (err) {
-        console.log('Share canceled or failed:', err);
+        console.log('Web share canceled or failed:', err);
       }
-    } else {
-      alert('System share is not supported on this device/browser.');
+    }
+
+    // 3. Desktop / Windows fallback: Copy text to clipboard and display tip
+    try {
+      await navigator.clipboard.writeText(textData);
+      setCopied(true);
+      setTipMessage('📋 Invoice text copied to clipboard! You can paste (Ctrl + V) into any application.');
+      setTimeout(() => setCopied(false), 3000);
+    } catch {
+      alert('Invoice text copied to clipboard.');
     }
   };
 
@@ -145,7 +198,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ bill, onClose }) => {
           {/* WhatsApp Button */}
           <a
             href={generateWhatsAppLink()}
-            onClick={handleShareClick}
+            onClick={handleWhatsAppClick}
             target="_blank"
             rel="noopener noreferrer"
             className="flex flex-col items-center justify-center rounded-2xl border border-emerald-100 bg-emerald-50/50 p-4 text-emerald-800 hover:bg-emerald-600 hover:text-white hover:border-emerald-600 hover:-translate-y-0.5 active:scale-95 transition-all duration-200"
@@ -195,18 +248,27 @@ export const ShareModal: React.FC<ShareModalProps> = ({ bill, onClose }) => {
           </button>
         </div>
 
+        {/* Direct Download Invoice Button */}
+        <button
+          onClick={() => downloadInvoicePdf(bill, branches, activeBranchId)}
+          className="w-full flex items-center justify-center gap-2 rounded-2xl bg-blue-600 px-4 py-3 text-sm font-bold text-white hover:bg-blue-500 shadow-md shadow-blue-500/20 active:scale-95 transition-all mb-3"
+        >
+          <Download className="w-4 h-4" />
+          Download Invoice
+        </button>
+
         {/* Local File Operations row */}
-        <div className="border-t border-slate-100 pt-4 flex gap-3">
+        <div className="border-t border-slate-100 pt-3 flex gap-3">
           <button
             onClick={handleViewPdf}
-            className="flex-1 flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-sm"
+            className="flex-1 flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-sm"
           >
             <FileText className="w-4 h-4 text-slate-500" />
             View Bill PDF
           </button>
           <button
             onClick={handleShowInFolder}
-            className="flex-1 flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-sm"
+            className="flex-1 flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-sm"
           >
             <FolderOpen className="w-4 h-4 text-slate-500" />
             Show in Folder

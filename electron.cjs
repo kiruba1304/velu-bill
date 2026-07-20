@@ -2650,6 +2650,198 @@ ipcMain.handle('db-call', async (event, payload) => {
   return await executeDbCall(method, args);
 });
 
+// ==========================================
+// WhatsApp Web Automation Service
+// ==========================================
+const { Client: WAClient, LocalAuth: WALocalAuth, MessageMedia: WAMessageMedia } = require('whatsapp-web.js');
+const qrcode = require('qrcode');
+
+let waClient = null;
+let waStatus = 'disconnected'; // 'disconnected' | 'loading' | 'qr_ready' | 'connected'
+let waQrCodeDataUrl = '';
+let waUserInfo = null;
+
+function getWaSessionsDir() {
+  return path.join(app.getPath('userData'), 'wa_session');
+}
+
+function initWhatsAppClient() {
+  if (waClient) {
+    if (waStatus === 'connected' && mainWindow && mainWindow.webContents) {
+      mainWindow.webContents.send('whatsapp-status', { status: waStatus, userInfo: waUserInfo });
+    }
+    return;
+  }
+
+  waStatus = 'loading';
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('whatsapp-status', { status: waStatus });
+  }
+
+  try {
+    waClient = new WAClient({
+      authStrategy: new WALocalAuth({ dataPath: getWaSessionsDir() }),
+      puppeteer: {
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--disable-gpu'
+        ]
+      }
+    });
+
+    waClient.on('qr', (qr) => {
+      waStatus = 'qr_ready';
+      qrcode.toDataURL(qr, (err, url) => {
+        if (!err) {
+          waQrCodeDataUrl = url;
+          if (mainWindow && mainWindow.webContents) {
+            mainWindow.webContents.send('whatsapp-qr', { qrUrl: url });
+            mainWindow.webContents.send('whatsapp-status', { status: 'qr_ready', qrUrl: url });
+          }
+        }
+      });
+    });
+
+    waClient.on('ready', () => {
+      waStatus = 'connected';
+      waQrCodeDataUrl = '';
+      try {
+        waUserInfo = waClient.info ? { wid: waClient.info.wid.user, pushname: waClient.info.pushname } : null;
+      } catch {}
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('whatsapp-status', { status: 'connected', userInfo: waUserInfo });
+      }
+    });
+
+    waClient.on('authenticated', () => {
+      waStatus = 'loading';
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('whatsapp-status', { status: 'loading' });
+      }
+    });
+
+    waClient.on('auth_failure', (msg) => {
+      console.error('WhatsApp Auth Failure:', msg);
+      waStatus = 'disconnected';
+      waClient = null;
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('whatsapp-status', { status: 'disconnected', error: String(msg) });
+      }
+    });
+
+    waClient.on('disconnected', (reason) => {
+      console.log('WhatsApp Disconnected:', reason);
+      waStatus = 'disconnected';
+      waClient = null;
+      waUserInfo = null;
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('whatsapp-status', { status: 'disconnected', reason });
+      }
+    });
+
+    waClient.initialize().catch((err) => {
+      console.error('Failed to initialize WhatsApp Client:', err);
+      waStatus = 'disconnected';
+      waClient = null;
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('whatsapp-status', { status: 'disconnected', error: String(err) });
+      }
+    });
+  } catch (err) {
+    console.error('WhatsApp Client init exception:', err);
+    waStatus = 'disconnected';
+    waClient = null;
+  }
+}
+
+ipcMain.handle('get-whatsapp-status', async () => {
+  return { status: waStatus, qrUrl: waQrCodeDataUrl, userInfo: waUserInfo };
+});
+
+ipcMain.handle('init-whatsapp', async () => {
+  initWhatsAppClient();
+  return { status: waStatus, qrUrl: waQrCodeDataUrl, userInfo: waUserInfo };
+});
+
+ipcMain.handle('disconnect-whatsapp', async () => {
+  if (waClient) {
+    try {
+      await waClient.logout();
+      await waClient.destroy();
+    } catch (e) {
+      console.error('Error destroying WA client:', e);
+    }
+  }
+  waClient = null;
+  waStatus = 'disconnected';
+  waQrCodeDataUrl = '';
+  waUserInfo = null;
+  if (mainWindow && mainWindow.webContents) {
+    mainWindow.webContents.send('whatsapp-status', { status: 'disconnected' });
+  }
+  return true;
+});
+
+ipcMain.handle('send-whatsapp-auto', async (event, payload) => {
+  const { phone, text, billNumber, customerName } = payload || {};
+  if (!waClient || waStatus !== 'connected') {
+    throw new Error('WhatsApp is not paired/connected. Please pair WhatsApp in Settings -> WhatsApp Automation.');
+  }
+  if (!phone) {
+    throw new Error('Phone number is required for WhatsApp auto-send.');
+  }
+
+  const cleanPhone = String(phone).replace(/\D/g, '');
+  const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+  const chatId = `${formattedPhone}@c.us`;
+
+  let sentSingleMedia = false;
+
+  // If PDF bill exists, send the PDF attachment with the full breakdown text as caption (SINGLE MESSAGE!)
+  if (billNumber) {
+    try {
+      const exeDir = isDev ? __dirname : path.dirname(process.execPath);
+      const billsDir = path.join(exeDir, 'bills');
+
+      let safeCustomerSuffix = '';
+      if (customerName && customerName.trim() !== '') {
+        const sanitized = customerName.replace(/[^a-zA-Z0-9\s-_]/g, '').trim().replace(/\s+/g, '_');
+        if (sanitized) {
+          safeCustomerSuffix = `_${sanitized}`;
+        }
+      }
+
+      const fullPath = path.join(billsDir, `${billNumber}${safeCustomerSuffix}.pdf`);
+
+      // Wait up to 3.5 seconds for PDF file to finish rendering and saving to disk
+      for (let attempt = 0; attempt < 7; attempt++) {
+        if (fs.existsSync(fullPath)) break;
+        await new Promise(r => setTimeout(r, 500));
+      }
+
+      if (fs.existsSync(fullPath)) {
+        const media = WAMessageMedia.fromFilePath(fullPath);
+        await waClient.sendMessage(chatId, media, { caption: text });
+        sentSingleMedia = true;
+      }
+    } catch (err) {
+      console.error('Failed to attach PDF in single auto-send message:', err);
+    }
+  }
+
+  // Fallback: If PDF was not attached/sent as media caption, send text message alone
+  if (!sentSingleMedia) {
+    await waClient.sendMessage(chatId, text);
+  }
+  return true;
+});
+
 app.whenReady().then(async () => {
   try {
     await initDb();
@@ -2657,6 +2849,13 @@ app.whenReady().then(async () => {
     console.error('Failed to initialize MySQL Database:', err);
   }
   createWindow();
+
+  // Auto-restore saved WhatsApp Web session on startup
+  try {
+    initWhatsAppClient();
+  } catch (err) {
+    console.error('Failed to auto-init WhatsApp on startup:', err);
+  }
 
   // Check for updates in production (packaged) environments
   if (!isDev) {

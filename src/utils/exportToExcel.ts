@@ -1,4 +1,7 @@
 import ExcelJS from 'exceljs';
+import { Capacitor } from '@capacitor/core';
+import { Filesystem, Directory } from '@capacitor/filesystem';
+import { Share } from '@capacitor/share';
 
 export interface ExcelHeaderInfo {
   branchName?: string;
@@ -119,13 +122,46 @@ export async function exportToExcel(
     column.width = Math.min(maxLen + 4, 60);
   });
 
-  // Write to Buffer and trigger browser/Electron download
+  // Write workbook to Buffer
   const buffer = await workbook.xlsx.writeBuffer();
+  const finalFilename = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
+
+  // Android APK Native File Saving & Sharing Handler
+  if (Capacitor.getPlatform() === 'android') {
+    try {
+      // Convert buffer array to base64 string
+      const bytes = new Uint8Array(buffer as ArrayBuffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64Data = btoa(binary);
+
+      // Save file to Android Cache directory
+      const savedFile = await Filesystem.writeFile({
+        path: finalFilename,
+        data: base64Data,
+        directory: Directory.Cache,
+        recursive: true
+      });
+
+      // Trigger native Android Share/Save picker
+      await Share.share({
+        title: finalFilename,
+        text: `Exported Report: ${finalFilename}`,
+        url: savedFile.uri,
+        dialogTitle: 'Save or Open Excel Report'
+      });
+      return;
+    } catch (err) {
+      console.error('Android native export error, falling back to browser download:', err);
+    }
+  }
+
+  // Web Browser & Electron Desktop fallback download
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
   });
-
-  const finalFilename = filename.endsWith('.xlsx') ? filename : `${filename}.xlsx`;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

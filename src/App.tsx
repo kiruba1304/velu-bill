@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Capacitor } from '@capacitor/core';
+import { App as CapacitorApp } from '@capacitor/app';
 import packageJson from '../package.json';
 import Sidebar from './components/Sidebar';
 import Dashboard from './pages/Dashboard';
@@ -44,6 +45,23 @@ function AppContent() {
         localStorage.setItem('app_current_page', currentPage);
       }
     } catch {}
+  }, [currentPage]);
+
+  // Handle Android Hardware / Gesture Back Button
+  useEffect(() => {
+    if (Capacitor.getPlatform() !== 'android') return;
+
+    const backListener = CapacitorApp.addListener('backButton', () => {
+      if (currentPage !== 'dashboard') {
+        setCurrentPage('dashboard');
+      } else {
+        CapacitorApp.exitApp();
+      }
+    });
+
+    return () => {
+      backListener.then(h => h.remove?.());
+    };
   }, [currentPage]);
 
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
