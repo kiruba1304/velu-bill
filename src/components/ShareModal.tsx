@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { X, Copy, Mail, Share2, Check, FileText, FolderOpen } from 'lucide-react';
 import { Bill } from '../types';
 
@@ -91,8 +92,8 @@ export const ShareModal: React.FC<ShareModalProps> = ({ bill, onClose }) => {
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-slate-950/60 backdrop-blur-sm p-4 animate-in fade-in zoom-in-95 duration-200">
       <div className="w-full max-w-md transform overflow-hidden rounded-3xl border border-white/60 bg-white/95 p-6 shadow-2xl backdrop-blur-md transition-all scale-100">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-100 pb-4">
@@ -212,6 +213,7 @@ export const ShareModal: React.FC<ShareModalProps> = ({ bill, onClose }) => {
           </button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };

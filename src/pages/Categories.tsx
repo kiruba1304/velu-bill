@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Plus,
   Search,
@@ -199,16 +200,17 @@ const Categories: React.FC = () => {
       </div>
 
       {/* Add/Edit Category Form Modal */}
-      {showAddForm && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="w-full max-w-md rounded-3xl border border-white/60 bg-white p-6 shadow-2xl">
+      {showAddForm && createPortal(
+        <div className="fixed inset-0 bg-slate-950/60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
+          <div className="w-full max-w-md rounded-3xl border border-white/60 bg-white p-6 shadow-2xl animate-in fade-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">
+              <h2 className="text-2xl font-bold text-slate-900">
                 {editingCategory ? 'Edit Category' : 'Add New Category'}
               </h2>
               <button
+                type="button"
                 onClick={resetForm}
-                className="text-slate-400 hover:text-slate-600"
+                className="text-slate-400 hover:text-slate-600 rounded-xl p-1 hover:bg-slate-100 transition-colors"
               >
                 <X className="w-6 h-6" />
               </button>
@@ -216,12 +218,13 @@ const Categories: React.FC = () => {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Category Name *
                 </label>
                 <input
                   type="text"
                   required
+                  autoFocus
                   value={formData.name}
                   onChange={(e) => handleInputChange('name', e.target.value)}
                   className="input w-full"
@@ -230,7 +233,7 @@ const Categories: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Description
                 </label>
                 <textarea
@@ -249,13 +252,13 @@ const Categories: React.FC = () => {
                   onChange={(e) => handleInputChange('customizationEnabled', e.target.checked)}
                   className="rounded border-slate-300 text-primary-600 focus:ring-primary-500 h-4 w-4"
                 />
-                <label htmlFor="customizationEnabled" className="text-sm font-medium text-gray-700">
+                <label htmlFor="customizationEnabled" className="text-sm font-medium text-slate-700">
                   Customization Tailoring Enabled
                 </label>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
                   Return Window Days
                 </label>
                 <input
@@ -267,7 +270,6 @@ const Categories: React.FC = () => {
                   placeholder="e.g. 7, 10 or blank"
                 />
               </div>
-
 
               <div className="flex gap-3 pt-4">
                 <button
@@ -287,7 +289,8 @@ const Categories: React.FC = () => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* Categories Table */}
