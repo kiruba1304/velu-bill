@@ -29,7 +29,23 @@ type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' 
 
 function AppContent() {
   const { currentUser, allowedPages } = useAuth();
-  const [currentPage, setCurrentPage] = useState<Page>('dashboard');
+  const [currentPage, setCurrentPage] = useState<Page>(() => {
+    try {
+      const saved = localStorage.getItem('app_current_page');
+      return (saved as Page) || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  });
+
+  useEffect(() => {
+    try {
+      if (currentPage) {
+        localStorage.setItem('app_current_page', currentPage);
+      }
+    } catch {}
+  }, [currentPage]);
+
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const db = useDatabase();
   useECommerceIntegration();

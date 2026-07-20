@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BarChart3,
   TrendingUp,
@@ -20,6 +20,7 @@ import {
 import { useBills, useProducts, useCustomers } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
 import { getStoreSettings } from '../utils/getStoreSettings';
+import { exportToExcel } from '../utils/exportToExcel';
 import { ShareModal } from '../components/ShareModal';
 import {
   generateQRData,
@@ -365,13 +366,20 @@ const Reports: React.FC = () => {
   const [showAllProducts, setShowAllProducts] = useState(false);
   const [showAllCustomers, setShowAllCustomers] = useState(false);
   const [activeSubTab, setActiveSubTab] = useState<'sales' | 'gst' | 'bills'>(() => {
-    const saved = localStorage.getItem('reports_active_subtab');
-    if (saved === 'bills' || saved === 'sales' || saved === 'gst') {
-      localStorage.removeItem('reports_active_subtab');
-      return saved as 'sales' | 'gst' | 'bills';
-    }
+    try {
+      const saved = localStorage.getItem('reports_active_subtab');
+      if (saved === 'bills' || saved === 'sales' || saved === 'gst') {
+        return saved as 'sales' | 'gst' | 'bills';
+      }
+    } catch {}
     return 'sales';
   });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('reports_active_subtab', activeSubTab);
+    } catch {}
+  }, [activeSubTab]);
   const [gstRateFilter, setGstRateFilter] = useState<string>('all');
 
   const periodBills = useMemo(() => {
@@ -412,11 +420,22 @@ const Reports: React.FC = () => {
     return bills;
   }, [bills, selectedPeriod, selectedMonth, selectedYear]);
 
+  const filteredPeriodBills = useMemo(() => {
+    return periodBills.filter(b => {
+      if (!b.createdAt) return false;
+      const billDate = getLocalDateString(new Date(b.createdAt));
+      if (fromDate && billDate < fromDate) return false;
+      if (toDate && billDate > toDate) return false;
+      return true;
+    });
+  }, [periodBills, fromDate, toDate]);
+
   const gstRecords = useMemo(() => {
     const list: Array<{
       id: string;
       billNumber: string;
       createdAt: string;
+      branchName: string;
       customerName: string;
       productName: string;
       productCode: string;
@@ -428,8 +447,9 @@ const Reports: React.FC = () => {
       grossValue: number;
     }> = [];
 
-    periodBills.forEach(b => {
+    filteredPeriodBills.forEach(b => {
       if (b.isGstBill === false) return;
+      const branchName = branches.find(br => Number(br.id) === Number(b.branchId))?.name || 'Main Branch';
       const items = b.items || [];
       const itemDiscounts = items.map(it => Number(it.totalPrice) * (Number(it.discount || 0) / 100));
       const itemBases = items.map((it, idx) => Math.max(0, Number(it.totalPrice) - itemDiscounts[idx]));
@@ -471,6 +491,7 @@ const Reports: React.FC = () => {
           id: `${b.billNumber}-${it.id}`,
           billNumber: b.billNumber,
           createdAt: b.createdAt,
+          branchName,
           customerName: b.customer?.name || 'Walk-in Customer',
           productName: p?.name || it.product?.name || `Product #${it.productId}`,
           productCode: p?.productCode || it.product?.productCode || '',
@@ -494,6 +515,7 @@ const Reports: React.FC = () => {
           id: `${b.billNumber}-shipping`,
           billNumber: b.billNumber,
           createdAt: b.createdAt,
+          branchName,
           customerName: b.customer?.name || 'Walk-in Customer',
           productName: 'Delivery / Shipping Charge',
           productCode: 'N/A',
@@ -543,52 +565,160 @@ const Reports: React.FC = () => {
     return { totalTaxable, totalCgst, totalSgst, totalGstAmt, totalGross };
   }, [filteredGstRecords]);
 
+  const months = [
+    'January', 'February', 'March', 'April', 'May', 'June',
+    'July', 'August', 'September', 'October', 'November', 'December'
+  ];
+
+  const getPeriodLabel = () => {
+    if (fromDate || toDate) {
+      if (fromDate && toDate && fromDate === toDate) {
+        return `Daily (${fromDate})`;
+      }
+      return `Custom Period (${fromDate || 'Start'} to ${toDate || 'End'})`;
+    }
+
+    if (selectedPeriod === 'daily') {
+      const todayStr = getLocalDateString(new Date());
+      return `Daily (${todayStr})`;
+    }
+
+    if (selectedPeriod === 'weekly') {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 6);
+      return `Weekly (${getLocalDateString(start)} to ${getLocalDateString(end)})`;
+    }
+
+    if (selectedPeriod === 'monthly') {
+      const monthName = months[selectedMonth] || '';
+      return `Monthly (${monthName} ${selectedYear})`;
+    }
+
+    return 'All Records';
+  };
+
+  const getPeriodFileSuffix = () => {
+    if (fromDate || toDate) {
+      if (fromDate && toDate && fromDate === toDate) {
+        return `daily_${fromDate}`;
+      }
+      return `${fromDate || 'start'}_to_${toDate || 'end'}`;
+    }
+
+    if (selectedPeriod === 'daily') {
+      const todayStr = getLocalDateString(new Date());
+      return `daily_${todayStr}`;
+    }
+
+    if (selectedPeriod === 'weekly') {
+      const end = new Date();
+      const start = new Date();
+      start.setDate(end.getDate() - 6);
+      return `weekly_${getLocalDateString(start)}_to_${getLocalDateString(end)}`;
+    }
+
+    if (selectedPeriod === 'monthly') {
+      const monthName = months[selectedMonth]?.toLowerCase() || '';
+      return `monthly_${monthName}_${selectedYear}`;
+    }
+
+    if (selectedPeriod === 'yearly') {
+      return `yearly_${selectedYear}`;
+    }
+
+    return 'all';
+  };
+
   const exportGstReport = () => {
-    const rows = [
-      ['Bill Number', 'Date', 'Customer Name', 'Product Name', 'Product Code', 'Taxable Value (\u20B9)', 'GST Rate (%)', 'CGST Amount (\u20B9)', 'SGST Amount (\u20B9)', 'Total GST Amount (\u20B9)', 'Gross Value (\u20B9)'],
-      ...filteredGstRecords.map(r => [
-        r.billNumber,
-        new Date(r.createdAt).toLocaleDateString() + ' ' + new Date(r.createdAt).toLocaleTimeString(),
-        r.customerName,
-        r.productName,
-        r.productCode,
-        r.taxableValue.toFixed(2),
-        r.gstRate.toFixed(0),
-        r.cgst.toFixed(2),
-        r.sgst.toFixed(2),
-        r.totalGst.toFixed(2),
-        r.grossValue.toFixed(2),
-      ])
-    ];
+    const rows: (string | number)[][] = [];
 
-    rows.push([]);
-    rows.push([
-      'TOTALS',
-      '',
-      '',
-      '',
-      '',
-      gstSummary.totalTaxable.toFixed(2),
-      '',
-      gstSummary.totalCgst.toFixed(2),
-      gstSummary.totalSgst.toFixed(2),
-      gstSummary.totalGstAmt.toFixed(2),
-      gstSummary.totalGross.toFixed(2)
-    ]);
+    // Group records by branch
+    const branchMap = new Map<string, typeof filteredGstRecords>();
+    filteredGstRecords.forEach(r => {
+      const bKey = r.branchName || 'Main Branch';
+      if (!branchMap.has(bKey)) branchMap.set(bKey, []);
+      branchMap.get(bKey)!.push(r);
+    });
 
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `gst_audit_report_${fromDate || 'start'}_to_${toDate || 'end'}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    const isAllBranches = !activeBranchId || branchMap.size > 1;
+
+    branchMap.forEach((records, bName) => {
+      if (isAllBranches) {
+        rows.push([`BRANCH: ${bName.toUpperCase()}`]);
+      }
+      rows.push(['Bill Number', 'Date', 'Customer Name', 'Product Name', 'Product Code', 'Taxable Value (₹)', 'GST Rate (%)', 'CGST Amount (₹)', 'SGST Amount (₹)', 'Total GST Amount (₹)', 'Gross Value (₹)']);
+
+      let bTaxable = 0, bCgst = 0, bSgst = 0, bTotalGst = 0, bGross = 0;
+      records.forEach(r => {
+        bTaxable += r.taxableValue;
+        bCgst += r.cgst;
+        bSgst += r.sgst;
+        bTotalGst += r.totalGst;
+        bGross += r.grossValue;
+
+        rows.push([
+          r.billNumber,
+          new Date(r.createdAt).toLocaleDateString() + ' ' + new Date(r.createdAt).toLocaleTimeString(),
+          r.customerName,
+          r.productName,
+          r.productCode,
+          Number(r.taxableValue.toFixed(2)),
+          Number(r.gstRate.toFixed(0)),
+          Number(r.cgst.toFixed(2)),
+          Number(r.sgst.toFixed(2)),
+          Number(r.totalGst.toFixed(2)),
+          Number(r.grossValue.toFixed(2)),
+        ]);
+      });
+
+      rows.push([
+        `${bName.toUpperCase()} TOTALS`,
+        '',
+        '',
+        '',
+        '',
+        Number(bTaxable.toFixed(2)),
+        '',
+        Number(bCgst.toFixed(2)),
+        Number(bSgst.toFixed(2)),
+        Number(bTotalGst.toFixed(2)),
+        Number(bGross.toFixed(2))
+      ]);
+      rows.push([]);
+    });
+
+    if (isAllBranches && branchMap.size > 0) {
+      rows.push([
+        'GRAND TOTALS (ALL BRANCHES)',
+        '',
+        '',
+        '',
+        '',
+        Number(gstSummary.totalTaxable.toFixed(2)),
+        '',
+        Number(gstSummary.totalCgst.toFixed(2)),
+        Number(gstSummary.totalSgst.toFixed(2)),
+        Number(gstSummary.totalGstAmt.toFixed(2)),
+        Number(gstSummary.totalGross.toFixed(2))
+      ]);
+    }
+
+    const storeSettings = getStoreSettings(null, branches, activeBranchId);
+    const headerInfo = {
+      reportTitle: `GST Audit Report - ${getPeriodLabel()}`,
+      branchName: activeBranchId ? storeSettings.storeName : 'ALL BRANCHES',
+      branchId: activeBranchId ? activeBranchId : 'ALL',
+      address: activeBranchId ? storeSettings.address : 'All Branches Combined',
+      phone: activeBranchId ? storeSettings.phone : '-',
+      dateRange: getPeriodLabel()
+    };
+    exportToExcel(rows, `gst_audit_report_${getPeriodFileSuffix()}.xlsx`, 'GST Audit Report', headerInfo);
   };
 
   const salesData: SalesData[] = useMemo(() => {
     const map = new Map<string, { revenue: number; orders: number; customers: Set<number> }>();
-    periodBills.forEach(b => {
+    filteredPeriodBills.forEach(b => {
       if (!b.createdAt) return;
       const key = getLocalDateString(new Date(b.createdAt));
       if (!map.has(key)) map.set(key, { revenue: 0, orders: 0, customers: new Set() });
@@ -603,7 +733,7 @@ const Reports: React.FC = () => {
       orders: v.orders,
       customers: v.customers.size,
     }));
-  }, [periodBills]);
+  }, [filteredPeriodBills]);
 
   const filteredSalesData = useMemo(() => {
     return salesData.filter(d => {
@@ -615,7 +745,7 @@ const Reports: React.FC = () => {
 
   const productSales: ProductSales[] = useMemo(() => {
     const map = new Map<number, ProductSales>();
-    periodBills.forEach(b => {
+    filteredPeriodBills.forEach(b => {
       (b.items || []).forEach(it => {
         const p = products.find(pp => pp.id === it.productId);
         const rec = map.get(it.productId) || {
@@ -646,11 +776,11 @@ const Reports: React.FC = () => {
       });
     });
     return Array.from(map.values());
-  }, [periodBills, products]);
+  }, [filteredPeriodBills, products]);
 
   const customerSales: CustomerSales[] = useMemo(() => {
     const map = new Map<number, CustomerSales>();
-    periodBills.forEach(b => {
+    filteredPeriodBills.forEach(b => {
       const cid = b.customerId;
       if (!cid) return;
       const cust = customers.find(c => c.id === cid);
@@ -667,7 +797,7 @@ const Reports: React.FC = () => {
       map.set(cid, rec);
     });
     return Array.from(map.values());
-  }, [periodBills, customers]);
+  }, [filteredPeriodBills, customers]);
 
   const calculatePeriodStats = () => {
     const totalRevenue = salesData.reduce((sum, day) => sum + day.revenue, 0);
@@ -694,37 +824,207 @@ const Reports: React.FC = () => {
   };
 
   const exportCsv = () => {
-    const rows = [
-      ['Bill Number', 'Date', 'Customer', 'Items Subtotal (₹)', 'Discount (₹)', 'Goods GST (₹)', 'Delivery Charge (₹)', 'Delivery GST (₹)', 'Total GST (₹)', 'Final Amount (₹)', 'Payment Method', 'Items Count'],
-      ...periodBills.map(b => {
+    const rows: (string | number)[][] = [];
+
+    // Group bills by branch
+    const branchMap = new Map<string, typeof filteredPeriodBills>();
+    filteredPeriodBills.forEach(b => {
+      const bName = branches.find(br => Number(br.id) === Number(b.branchId))?.name || 'Main Branch';
+      if (!branchMap.has(bName)) branchMap.set(bName, []);
+      branchMap.get(bName)!.push(b);
+    });
+
+    const isAllBranches = !activeBranchId || branchMap.size > 1;
+
+    let grandSubtotal = 0, grandDiscount = 0, grandGoodsGst = 0, grandDeliveryCharge = 0, grandDeliveryGst = 0, grandTotalGst = 0, grandFinal = 0, grandItems = 0;
+
+    branchMap.forEach((bills, bName) => {
+      if (isAllBranches) {
+        rows.push([`BRANCH: ${bName.toUpperCase()}`]);
+      }
+      rows.push(['Bill Number', 'Date', 'Customer', 'Items Subtotal (₹)', 'Discount (₹)', 'Goods GST (₹)', 'Delivery Charge (₹)', 'Delivery GST (₹)', 'Total GST (₹)', 'Final Amount (₹)', 'Payment Method', 'Items Count']);
+
+      let bSubtotal = 0, bDiscount = 0, bGoodsGst = 0, bDeliveryCharge = 0, bDeliveryGst = 0, bTotalGst = 0, bFinal = 0, bItems = 0;
+
+      bills.forEach(b => {
         const totalGst = b.totalGst || 0;
         const deliveryGst = b.shippingGst || 0;
         const goodsGst = totalGst - deliveryGst;
         const deliveryCharge = b.shippingCharge || 0;
-        return [
+        const subtotal = b.totalAmount || 0;
+        const discount = b.totalDiscount || 0;
+        const finalAmt = b.finalAmount || 0;
+        const itemsCount = b.items?.length || 0;
+
+        bSubtotal += subtotal;
+        bDiscount += discount;
+        bGoodsGst += goodsGst;
+        bDeliveryCharge += deliveryCharge;
+        bDeliveryGst += deliveryGst;
+        bTotalGst += totalGst;
+        bFinal += finalAmt;
+        bItems += itemsCount;
+
+        grandSubtotal += subtotal;
+        grandDiscount += discount;
+        grandGoodsGst += goodsGst;
+        grandDeliveryCharge += deliveryCharge;
+        grandDeliveryGst += deliveryGst;
+        grandTotalGst += totalGst;
+        grandFinal += finalAmt;
+        grandItems += itemsCount;
+
+        rows.push([
           b.billNumber,
           new Date(b.createdAt).toLocaleString(),
           b.customer?.name || '',
-          b.totalAmount.toFixed(2),
-          b.totalDiscount.toFixed(2),
-          goodsGst.toFixed(2),
-          deliveryCharge.toFixed(2),
-          deliveryGst.toFixed(2),
-          totalGst.toFixed(2),
-          b.finalAmount.toFixed(2),
+          Number(subtotal.toFixed(2)),
+          Number(discount.toFixed(2)),
+          Number(goodsGst.toFixed(2)),
+          Number(deliveryCharge.toFixed(2)),
+          Number(deliveryGst.toFixed(2)),
+          Number(totalGst.toFixed(2)),
+          Number(finalAmt.toFixed(2)),
           b.paymentMethod,
-          String(b.items?.length || 0),
-        ];
-      })
-    ];
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'sales_report.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+          Number(itemsCount),
+        ]);
+      });
+
+      rows.push([
+        `${bName.toUpperCase()} TOTALS`,
+        '',
+        '',
+        Number(bSubtotal.toFixed(2)),
+        Number(bDiscount.toFixed(2)),
+        Number(bGoodsGst.toFixed(2)),
+        Number(bDeliveryCharge.toFixed(2)),
+        Number(bDeliveryGst.toFixed(2)),
+        Number(bTotalGst.toFixed(2)),
+        Number(bFinal.toFixed(2)),
+        '',
+        Number(bItems)
+      ]);
+      rows.push([]);
+    });
+
+    if (isAllBranches && branchMap.size > 0) {
+      rows.push([
+        'GRAND TOTALS (ALL BRANCHES)',
+        '',
+        '',
+        Number(grandSubtotal.toFixed(2)),
+        Number(grandDiscount.toFixed(2)),
+        Number(grandGoodsGst.toFixed(2)),
+        Number(grandDeliveryCharge.toFixed(2)),
+        Number(grandDeliveryGst.toFixed(2)),
+        Number(grandTotalGst.toFixed(2)),
+        Number(grandFinal.toFixed(2)),
+        '',
+        Number(grandItems)
+      ]);
+    }
+
+    const storeSettings = getStoreSettings(null, branches, activeBranchId);
+    const headerInfo = {
+      reportTitle: `Sales Overview Report - ${getPeriodLabel()}`,
+      branchName: activeBranchId ? storeSettings.storeName : 'ALL BRANCHES',
+      branchId: activeBranchId ? activeBranchId : 'ALL',
+      address: activeBranchId ? storeSettings.address : 'All Branches Combined',
+      phone: activeBranchId ? storeSettings.phone : '-',
+      dateRange: getPeriodLabel()
+    };
+    exportToExcel(rows, `sales_report_${getPeriodFileSuffix()}.xlsx`, 'Sales Report', headerInfo);
+  };
+
+  const exportBillsListToExcel = () => {
+    const rows: (string | number)[][] = [];
+
+    const branchMap = new Map<string, typeof filteredPeriodBills>();
+    filteredPeriodBills.forEach(b => {
+      const bName = branches.find(br => Number(br.id) === Number(b.branchId))?.name || 'Main Branch';
+      if (!branchMap.has(bName)) branchMap.set(bName, []);
+      branchMap.get(bName)!.push(b);
+    });
+
+    const isAllBranches = !activeBranchId || branchMap.size > 1;
+
+    let grandSubtotal = 0, grandDiscount = 0, grandGst = 0, grandTotal = 0;
+
+    branchMap.forEach((bills, bName) => {
+      if (isAllBranches) {
+        rows.push([`BRANCH: ${bName.toUpperCase()}`]);
+      }
+      rows.push(['Invoice No', 'Date & Time', 'Customer Name', 'Subtotal (₹)', 'Discount (₹)', 'GST (₹)', 'Total Amount (₹)', 'Payment Method', 'Status']);
+
+      let bSubtotal = 0, bDiscount = 0, bGst = 0, bTotal = 0;
+
+      bills.forEach(b => {
+        const subtotal = b.totalAmount || 0;
+        const discount = b.totalDiscount || 0;
+        const gst = b.totalGst || 0;
+        const finalAmt = b.finalAmount || 0;
+
+        bSubtotal += subtotal;
+        bDiscount += discount;
+        bGst += gst;
+        bTotal += finalAmt;
+
+        grandSubtotal += subtotal;
+        grandDiscount += discount;
+        grandGst += gst;
+        grandTotal += finalAmt;
+
+        rows.push([
+          b.billNumber,
+          new Date(b.createdAt).toLocaleDateString() + ' ' + new Date(b.createdAt).toLocaleTimeString(),
+          b.customer?.name || 'Walk-in Customer',
+          Number(subtotal.toFixed(2)),
+          Number(discount.toFixed(2)),
+          Number(gst.toFixed(2)),
+          Number(finalAmt.toFixed(2)),
+          b.paymentMethod.toUpperCase(),
+          b.status
+        ]);
+      });
+
+      rows.push([
+        `${bName.toUpperCase()} TOTALS`,
+        '',
+        '',
+        Number(bSubtotal.toFixed(2)),
+        Number(bDiscount.toFixed(2)),
+        Number(bGst.toFixed(2)),
+        Number(bTotal.toFixed(2)),
+        '',
+        ''
+      ]);
+      rows.push([]);
+    });
+
+    if (isAllBranches && branchMap.size > 0) {
+      rows.push([
+        'GRAND TOTALS (ALL BRANCHES)',
+        '',
+        '',
+        Number(grandSubtotal.toFixed(2)),
+        Number(grandDiscount.toFixed(2)),
+        Number(grandGst.toFixed(2)),
+        Number(grandTotal.toFixed(2)),
+        '',
+        ''
+      ]);
+    }
+
+    const storeSettings = getStoreSettings(null, branches, activeBranchId);
+    const headerInfo = {
+      reportTitle: `Invoices & Bills List - ${getPeriodLabel()}`,
+      branchName: activeBranchId ? storeSettings.storeName : 'ALL BRANCHES',
+      branchId: activeBranchId ? activeBranchId : 'ALL',
+      address: activeBranchId ? storeSettings.address : 'All Branches Combined',
+      phone: activeBranchId ? storeSettings.phone : '-',
+      dateRange: getPeriodLabel()
+    };
+    exportToExcel(rows, `invoices_list_${getPeriodFileSuffix()}.xlsx`, 'Invoices List', headerInfo);
   };
 
   const topProducts = [...productSales]
@@ -736,102 +1036,154 @@ const Reports: React.FC = () => {
     .slice(0, 5);
 
   const exportSalesDetails = () => {
-    const rows: (string | number)[][] = [
-      ['Date','Bill No','Item Name','Code','Qty','Unit Cost','Unit Sell','Cost Total','Sell Total','Item Discount','GST','Final Bill Total','Bill Total Discount','Profit2']
-    ];
-    let sumCost = 0;
-    let sumSell = 0;
-    let sumProfit2 = 0;
-    let sumBillFinal = 0;
-    let sumBillDiscount = 0;
+    const rows: (string | number)[][] = [];
 
-    periodBills.forEach(b => {
-      const items = (b.items || []);
-      // Compute per-bill bases and extra discount distribution
-      const itemDiscounts = items.map(it => Number(it.totalPrice) * (Number(it.discount || 0) / 100));
-      const itemBases = items.map((it, idx) => Math.max(0, Number(it.totalPrice) - itemDiscounts[idx]));
-      const base = itemBases.reduce((a, c) => a + c, 0);
-      const itemDiscSum = itemDiscounts.reduce((a, c) => a + c, 0);
-      const extraPart = Math.max(0, Number(b.totalDiscount || 0) - itemDiscSum);
-
-      items.forEach((it, idx) => {
-        const p = products.find(pp => pp.id === it.productId);
-        const unitCost = Number(p?.costPrice ?? 0);
-        const unitSell = Number(it.unitPrice);
-        const qty = Number(it.quantity);
-        const costTotal = unitCost * qty;
-        const sellTotal = unitSell * qty;
-
-        const itemBase = itemBases[idx] || 0;
-        const share = base > 0 ? (itemBase / base) : 0;
-        const perItemExtra = extraPart * share;
-        const perItemDisc = (itemDiscounts[idx] || 0) + perItemExtra;
-        let gstInclusive = false;
-        try {
-          const raw = localStorage.getItem('app_settings');
-          if (raw) {
-            gstInclusive = !!JSON.parse(raw).gstInclusive;
-          }
-        } catch {}
-
-        const isBillGstEnabled = b.isGstBill !== false;
-        const itemGstRate = isBillGstEnabled ? Number(it.gst || 0) : 0;
-        const adjustedBaseRaw = Math.max(0, itemBase - perItemExtra);
-        let itemGst = 0;
-        let itemFinalIncGst = 0;
-
-        if (gstInclusive) {
-          itemGst = adjustedBaseRaw * (itemGstRate / 100) / (1 + itemGstRate / 100);
-          itemFinalIncGst = adjustedBaseRaw;
-        } else {
-          itemGst = adjustedBaseRaw * (itemGstRate / 100);
-          itemFinalIncGst = adjustedBaseRaw + itemGst;
-        }
-
-        const profit2 = itemFinalIncGst - costTotal; // total - total cost price
-
-        sumCost += costTotal;
-        sumSell += sellTotal;
-        sumProfit2 += profit2;
-        sumBillFinal += Number(b.finalAmount || 0);
-        sumBillDiscount += Number(b.totalDiscount || 0);
-
-        rows.push([
-          new Date(b.createdAt).toLocaleDateString(),
-          b.billNumber,
-          p?.name || `#${it.productId}`,
-          p?.productCode || '',
-          qty,
-          unitCost.toFixed(2),
-          unitSell.toFixed(2),
-          costTotal.toFixed(2),
-          sellTotal.toFixed(2),
-          (-perItemDisc).toFixed(2),
-          itemGst.toFixed(2),
-          Number(b.finalAmount || 0).toFixed(2),
-          Number(b.totalDiscount || 0).toFixed(2),
-          profit2.toFixed(2),
-        ]);
-      });
+    // Group bills by branch
+    const branchMap = new Map<string, typeof filteredPeriodBills>();
+    filteredPeriodBills.forEach(b => {
+      const bName = branches.find(br => Number(br.id) === Number(b.branchId))?.name || 'Main Branch';
+      if (!branchMap.has(bName)) branchMap.set(bName, []);
+      branchMap.get(bName)!.push(b);
     });
 
-    rows.push([]);
-    rows.push(['TOTALS','','','', '', '', '', sumCost.toFixed(2), sumSell.toFixed(2), '', '', sumBillFinal.toFixed(2), sumBillDiscount.toFixed(2), sumProfit2.toFixed(2)]);
+    const isAllBranches = !activeBranchId || branchMap.size > 1;
 
-    const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'sales_details.csv';
-    a.click();
-    URL.revokeObjectURL(url);
+    let grandCost = 0, grandSell = 0, grandProfit2 = 0, grandBillFinal = 0, grandBillDiscount = 0;
+
+    branchMap.forEach((bills, bName) => {
+      if (isAllBranches) {
+        rows.push([`BRANCH: ${bName.toUpperCase()}`]);
+      }
+      rows.push(['Date', 'Bill No', 'Item Name', 'Code', 'Qty', 'Unit Cost', 'Unit Sell', 'Cost Total', 'Sell Total', 'Item Discount', 'GST', 'Final Bill Total', 'Bill Total Discount', 'Profit']);
+
+      let bCost = 0, bSell = 0, bProfit2 = 0, bBillFinal = 0, bBillDiscount = 0;
+
+      bills.forEach(b => {
+        const items = (b.items || []);
+        const itemDiscounts = items.map(it => Number(it.totalPrice) * (Number(it.discount || 0) / 100));
+        const itemBases = items.map((it, idx) => Math.max(0, Number(it.totalPrice) - itemDiscounts[idx]));
+        const base = itemBases.reduce((a, c) => a + c, 0);
+        const itemDiscSum = itemDiscounts.reduce((a, c) => a + c, 0);
+        const extraPart = Math.max(0, Number(b.totalDiscount || 0) - itemDiscSum);
+
+        items.forEach((it, idx) => {
+          const p = products.find(pp => pp.id === it.productId);
+          const unitCost = Number(p?.costPrice ?? 0);
+          const unitSell = Number(it.unitPrice);
+          const qty = Number(it.quantity);
+          const costTotal = unitCost * qty;
+          const sellTotal = unitSell * qty;
+
+          const itemBase = itemBases[idx] || 0;
+          const share = base > 0 ? (itemBase / base) : 0;
+          const perItemExtra = extraPart * share;
+          const perItemDisc = (itemDiscounts[idx] || 0) + perItemExtra;
+          let gstInclusive = false;
+          try {
+            const raw = localStorage.getItem('app_settings');
+            if (raw) {
+              gstInclusive = !!JSON.parse(raw).gstInclusive;
+            }
+          } catch {}
+
+          const isBillGstEnabled = b.isGstBill !== false;
+          const itemGstRate = isBillGstEnabled ? Number(it.gst || 0) : 0;
+          const adjustedBaseRaw = Math.max(0, itemBase - perItemExtra);
+          let itemGst = 0;
+          let itemFinalIncGst = 0;
+
+          if (gstInclusive) {
+            itemGst = adjustedBaseRaw * (itemGstRate / 100) / (1 + itemGstRate / 100);
+            itemFinalIncGst = adjustedBaseRaw;
+          } else {
+            itemGst = adjustedBaseRaw * (itemGstRate / 100);
+            itemFinalIncGst = adjustedBaseRaw + itemGst;
+          }
+
+          const profit2 = itemFinalIncGst - costTotal;
+
+          bCost += costTotal;
+          bSell += sellTotal;
+          bProfit2 += profit2;
+
+          grandCost += costTotal;
+          grandSell += sellTotal;
+          grandProfit2 += profit2;
+
+          rows.push([
+            new Date(b.createdAt).toLocaleDateString(),
+            b.billNumber,
+            p?.name || `#${it.productId}`,
+            p?.productCode || '',
+            qty,
+            unitCost.toFixed(2),
+            unitSell.toFixed(2),
+            costTotal.toFixed(2),
+            sellTotal.toFixed(2),
+            (-perItemDisc).toFixed(2),
+            itemGst.toFixed(2),
+            Number(b.finalAmount || 0).toFixed(2),
+            Number(b.totalDiscount || 0).toFixed(2),
+            profit2.toFixed(2),
+          ]);
+        });
+
+        bBillFinal += Number(b.finalAmount || 0);
+        bBillDiscount += Number(b.totalDiscount || 0);
+        grandBillFinal += Number(b.finalAmount || 0);
+        grandBillDiscount += Number(b.totalDiscount || 0);
+      });
+
+      rows.push([
+        `${bName.toUpperCase()} TOTALS`,
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        Number(bCost.toFixed(2)),
+        Number(bSell.toFixed(2)),
+        '',
+        '',
+        Number(bBillFinal.toFixed(2)),
+        Number(bBillDiscount.toFixed(2)),
+        Number(bProfit2.toFixed(2))
+      ]);
+      rows.push([]);
+    });
+
+    if (isAllBranches && branchMap.size > 0) {
+      rows.push([
+        'GRAND TOTALS (ALL BRANCHES)',
+        '',
+        '',
+        '',
+        '',
+        '',
+        '',
+        Number(grandCost.toFixed(2)),
+        Number(grandSell.toFixed(2)),
+        '',
+        '',
+        Number(grandBillFinal.toFixed(2)),
+        Number(grandBillDiscount.toFixed(2)),
+        Number(grandProfit2.toFixed(2))
+      ]);
+    }
+
+    const storeSettings = getStoreSettings(null, branches, activeBranchId);
+    const headerInfo = {
+      reportTitle: `Itemized Sales Breakdown - ${getPeriodLabel()}`,
+      branchName: activeBranchId ? storeSettings.storeName : 'ALL BRANCHES',
+      branchId: activeBranchId ? activeBranchId : 'ALL',
+      address: activeBranchId ? storeSettings.address : 'All Branches Combined',
+      phone: activeBranchId ? storeSettings.phone : '-',
+      dateRange: getPeriodLabel()
+    };
+    exportToExcel(rows, `sales_details_${getPeriodFileSuffix()}.xlsx`, 'Sales Details', headerInfo);
   };
 
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December'
-  ];
 
   const years = useMemo(() => {
     const current = new Date().getFullYear();
@@ -1396,7 +1748,7 @@ const Reports: React.FC = () => {
                 </div>
                 <button onClick={exportSalesDetails} className="btn-secondary flex items-center gap-2 px-3 py-2 text-sm">
                   <Download className="h-4 w-4" />
-                  Export
+                  Export Excel
                 </button>
               </div>
             </div>
@@ -1574,7 +1926,7 @@ const Reports: React.FC = () => {
                   className="btn-secondary flex items-center gap-2 px-3 py-2 text-xs"
                 >
                   <Download className="h-4 w-4" />
-                  Export GST CSV
+                  Export GST Excel
                 </button>
               </div>
             </div>
@@ -1656,6 +2008,13 @@ const Reports: React.FC = () => {
                 <h3 className="text-lg font-bold text-slate-900">Invoices / Bills List</h3>
                 <p className="text-xs text-slate-500 mt-0.5">List of all bills generated in the selected period, ordered date-wise.</p>
               </div>
+              <button
+                onClick={exportBillsListToExcel}
+                className="btn-secondary flex items-center gap-2 px-3 py-2 text-xs self-start sm:self-auto"
+              >
+                <Download className="h-4 w-4" />
+                Export Invoices Excel
+              </button>
             </div>
 
             <div className="overflow-x-auto rounded-2xl border border-slate-100">
@@ -1674,8 +2033,8 @@ const Reports: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody>
-                  {periodBills.length > 0 ? (
-                    periodBills.map((bill) => {
+                  {filteredPeriodBills.length > 0 ? (
+                    filteredPeriodBills.map((bill) => {
                       const customerName = bill.customer?.name || 'Walk-in Customer';
                       return (
                         <tr key={bill.id} className="border-b border-slate-100 hover:bg-slate-50/50">
