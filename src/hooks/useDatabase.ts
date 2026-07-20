@@ -880,8 +880,48 @@ export const useBills = (branchId?: number) => {
 
   const deleteBill = async (id: number) => {
     try {
+      const billToDelete = bills.find(b => b.id === id);
       const success = await db.deleteBill(id);
       if (success) {
+        if (billToDelete) {
+          try {
+            const billNum = billToDelete.billNumber;
+            // 1. Standard bill number format: B{branchId}-{yyyymmdd}-{seq}
+            const stdMatch = billNum.match(/^B(\d+)-(\d{8})-(\d+)$/);
+            if (stdMatch) {
+              const branchIdVal = stdMatch[1];
+              const yyyymmdd = stdMatch[2];
+              const seq = parseInt(stdMatch[3], 10);
+              const key = `bill_counter_branch_${branchIdVal}_${yyyymmdd}`;
+              const currentCounter = parseInt(localStorage.getItem(key) || '0', 10);
+              if (currentCounter === seq) {
+                if (currentCounter <= 1) {
+                  localStorage.removeItem(key);
+                } else {
+                  localStorage.setItem(key, String(currentCounter - 1));
+                }
+              }
+            } else {
+              // 2. Showroom bike bill number format: {yyyymmdd}-{seq}
+              const bikeMatch = billNum.match(/^(\d{8})-(\d+)$/);
+              if (bikeMatch) {
+                const yyyymmdd = bikeMatch[1];
+                const seq = parseInt(bikeMatch[2], 10);
+                const key = `bill_counter_${yyyymmdd}`;
+                const currentCounter = parseInt(localStorage.getItem(key) || '0', 10);
+                if (currentCounter === seq) {
+                  if (currentCounter <= 1) {
+                    localStorage.removeItem(key);
+                  } else {
+                    localStorage.setItem(key, String(currentCounter - 1));
+                  }
+                }
+              }
+            }
+          } catch (e) {
+            console.error('Failed to reset bill number counter:', e);
+          }
+        }
         await loadBills();
       }
       return success;

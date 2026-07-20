@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   Plus,
   Package,
@@ -9,9 +9,11 @@ import {
   Settings as SettingsIcon,
   Printer,
   Eye,
+  Share2,
 } from 'lucide-react';
 import { useProducts, useCustomers, useBills } from '../hooks/useDatabase';
 import { Bill } from '../types';
+import { ShareModal } from '../components/ShareModal';
 import {
   generateQRData,
   generateThermalCompactReceipt,
@@ -30,6 +32,7 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const { products, loading: productsLoading } = useProducts();
+  const [sharingBill, setSharingBill] = useState<Bill | null>(null);
   const { customers, loading: customersLoading } = useCustomers();
 
   // Calculate real statistics
@@ -111,7 +114,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }
   ];
 
-  const lowStockProducts = products.filter(p => p.count <= 10).slice(0, 3);
+  const lowStockProducts = products.filter(p => p.count <= 10);
 
   const { bills, loading: billsLoading } = useBills();
 
@@ -258,6 +261,75 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
     }
   };
 
+  const handleShareBill = (bill: Bill) => {
+    const populatedBill = {
+      ...bill,
+      items: (bill.items || []).map(item => ({
+        ...item,
+        product: products.find(p => p.id === item.productId) || item.product
+      }))
+    };
+
+    const appSettingsRaw = localStorage.getItem('app_settings');
+    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
+    
+    const settings = {
+      storeName: appSettings.storeName || 'SASHVIKA SAREES',
+      upiId: appSettings.upiId || '',
+      bankAccountNumber: appSettings.bankAccountNumber || '',
+      bankIfscCode: appSettings.bankIfscCode || '',
+      accountHolderName: appSettings.accountHolderName || '',
+      address: appSettings.address || '',
+      phone: appSettings.phone || '',
+      gstNumber: appSettings.gstNumber || '',
+      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
+      footerMessage: appSettings.footerMessage || '',
+      logoUrl: appSettings.logoUrl || ''
+    };
+
+    const qrData = generateQRData(populatedBill, settings);
+    const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
+
+    let receiptHTML = '';
+    switch (selectedTemplate) {
+      case 'thermal-compact':
+        receiptHTML = generateThermalCompactReceipt(populatedBill, settings, qrData);
+        break;
+      case 'thermal-detailed':
+        receiptHTML = generateThermalDetailedReceipt(populatedBill, settings, qrData);
+        break;
+      case 'regular-a5':
+        receiptHTML = generateRegularA5Receipt(populatedBill, settings, qrData);
+        break;
+      case 'regular-a4':
+        receiptHTML = generateRegularA4Receipt(populatedBill, settings, qrData);
+        break;
+      case 'regular-a4-detailed':
+        receiptHTML = generateRegularA4DetailedReceipt(populatedBill, settings, qrData);
+        break;
+      case 'thermal-standard':
+      default:
+        receiptHTML = generateThermalStandardReceipt(populatedBill, settings, qrData);
+    }
+
+    const customer = customers.find(c => c.id === bill.customerId);
+    const customerName = customer?.name || bill.customer?.name || '';
+
+    const api = (window as any).electronAPI;
+    if (api?.saveBillPdf) {
+      api.saveBillPdf(bill.billNumber, receiptHTML, customerName)
+        .then(() => {
+          setSharingBill(populatedBill);
+        })
+        .catch((err: any) => {
+          console.error("Failed to generate PDF for sharing:", err);
+          setSharingBill(populatedBill);
+        });
+    } else {
+      setSharingBill(populatedBill);
+    }
+  };
+
   return (
     <div className="min-h-full rounded-none md:rounded-[2rem] bg-white/70 p-4 md:p-8 shadow-soft backdrop-blur-sm">
       <div className="mb-8 flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
@@ -320,7 +392,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
             <AlertTriangle className="mr-2 h-5 w-5 text-orange-500" />
             <h2 className="text-lg font-semibold text-slate-900">Low Stock Alert</h2>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-3 max-h-[370px] overflow-y-auto pr-1">
             {lowStockProducts.length > 0 ? lowStockProducts.map((product, index) => (
               <div key={index} className="flex items-center justify-between rounded-2xl bg-orange-50/80 p-3">
                 <div>
@@ -392,6 +464,13 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                       >
                         <Printer className="h-4 w-4" />
                       </button>
+                      <button
+                        onClick={() => handleShareBill(bill)}
+                        className="btn-icon btn-icon-neutral text-slate-500 hover:text-primary-600 p-2.5 rounded-xl bg-white border border-slate-200 shadow-sm hover:border-primary-100 transition-all"
+                        title="Share Bill"
+                      >
+                        <Share2 className="h-4 w-4" />
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -411,6 +490,9 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
           </div>
         </div>
       </div>
+      {sharingBill && (
+        <ShareModal bill={sharingBill} onClose={() => setSharingBill(null)} />
+      )}
     </div>
   );
 };

@@ -1001,6 +1001,162 @@ ipcMain.handle('save-json', async (event, payload) => {
   return fullPath;
 });
 
+// IPC: Save Bill Receipt as PDF inside bills folder in installation directory
+ipcMain.handle('save-bill-pdf', async (event, payload) => {
+  const { billNumber, htmlContent, customerName } = payload || {};
+  if (!billNumber || !htmlContent) throw new Error('billNumber and htmlContent are required');
+
+  const exeDir = isDev ? __dirname : path.dirname(process.execPath);
+  const billsDir = path.join(exeDir, 'bills');
+  await fsp.mkdir(billsDir, { recursive: true });
+
+  let safeCustomerSuffix = '';
+  if (customerName && customerName.trim() !== '') {
+    const sanitized = customerName.replace(/[^a-zA-Z0-9\s-_]/g, '').trim().replace(/\s+/g, '_');
+    if (sanitized) {
+      safeCustomerSuffix = `_${sanitized}`;
+    }
+  }
+
+  const fullPath = path.join(billsDir, `${billNumber}${safeCustomerSuffix}.pdf`);
+
+  // Clean the HTML from any scripted auto-printing scripts (like window.print())
+  let cleanedHtml = htmlContent;
+  try {
+    cleanedHtml = cleanedHtml.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '');
+    cleanedHtml = cleanedHtml.replace(/onload\s*=\s*["']\s*window\.print\(\s*\);?\s*["']/gi, '');
+    cleanedHtml = cleanedHtml.replace(/onload\s*=\s*["']\s*javascript\s*:\s*window\.print\(\s*\);?\s*["']/gi, '');
+    cleanedHtml = cleanedHtml.replace(/<body\s+onload\s*=\s*["']window\.print\(\)["']/gi, '<body');
+    cleanedHtml = cleanedHtml.replace(/<body\s+onload\s*=\s*[']window\.print\(\)[']/gi, '<body');
+  } catch (e) {
+    console.error('Failed to clean HTML script tags:', e);
+  }
+
+  const pdfWin = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true
+    }
+  });
+
+  try {
+    await pdfWin.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(cleanedHtml));
+    const data = await pdfWin.webContents.printToPDF({
+      printBackground: true,
+      margins: { marginType: 'none' },
+      preferCSSPageSize: true
+    });
+    await fsp.writeFile(fullPath, data);
+    return fullPath;
+  } catch (err) {
+    console.error('Error generating PDF:', err);
+    throw err;
+  } finally {
+    pdfWin.close();
+  }
+});
+
+// IPC: Show PDF file in File Explorer
+ipcMain.handle('show-file-in-folder', async (event, payload) => {
+  const { billNumber, customerName } = payload || {};
+  if (!billNumber) throw new Error('billNumber is required');
+
+  const exeDir = isDev ? __dirname : path.dirname(process.execPath);
+  const billsDir = path.join(exeDir, 'bills');
+
+  let safeCustomerSuffix = '';
+  if (customerName && customerName.trim() !== '') {
+    const sanitized = customerName.replace(/[^a-zA-Z0-9\s-_]/g, '').trim().replace(/\s+/g, '_');
+    if (sanitized) {
+      safeCustomerSuffix = `_${sanitized}`;
+    }
+  }
+
+  const fullPath = path.join(billsDir, `${billNumber}${safeCustomerSuffix}.pdf`);
+
+  try {
+    const { shell } = require('electron');
+    await fsp.access(fullPath);
+    shell.showItemInFolder(fullPath);
+    return true;
+  } catch (e) {
+    const { shell } = require('electron');
+    await fsp.mkdir(billsDir, { recursive: true });
+    shell.openPath(billsDir);
+    return false;
+  }
+});
+
+// IPC: Open PDF file directly in default PDF Viewer
+ipcMain.handle('open-file', async (event, payload) => {
+  const { billNumber, customerName } = payload || {};
+  if (!billNumber) throw new Error('billNumber is required');
+
+  const exeDir = isDev ? __dirname : path.dirname(process.execPath);
+  const billsDir = path.join(exeDir, 'bills');
+
+  let safeCustomerSuffix = '';
+  if (customerName && customerName.trim() !== '') {
+    const sanitized = customerName.replace(/[^a-zA-Z0-9\s-_]/g, '').trim().replace(/\s+/g, '_');
+    if (sanitized) {
+      safeCustomerSuffix = `_${sanitized}`;
+    }
+  }
+
+  const fullPath = path.join(billsDir, `${billNumber}${safeCustomerSuffix}.pdf`);
+
+  try {
+    const { shell } = require('electron');
+    await fsp.access(fullPath);
+    await shell.openPath(fullPath);
+    return true;
+  } catch (e) {
+    return false;
+  }
+});
+
+// IPC: Copy PDF file to system clipboard as a file object
+ipcMain.handle('copy-file-to-clipboard', async (event, payload) => {
+  const { billNumber, customerName } = payload || {};
+  if (!billNumber) throw new Error('billNumber is required');
+
+  const exeDir = isDev ? __dirname : path.dirname(process.execPath);
+  const billsDir = path.join(exeDir, 'bills');
+
+  let safeCustomerSuffix = '';
+  if (customerName && customerName.trim() !== '') {
+    const sanitized = customerName.replace(/[^a-zA-Z0-9\s-_]/g, '').trim().replace(/\s+/g, '_');
+    if (sanitized) {
+      safeCustomerSuffix = `_${sanitized}`;
+    }
+  }
+
+  const fullPath = path.join(billsDir, `${billNumber}${safeCustomerSuffix}.pdf`);
+
+  try {
+    await fsp.access(fullPath);
+    const { exec } = require('child_process');
+    // Escape single quotes in path if any
+    const escapedPath = fullPath.replace(/'/g, "''");
+    const cmd = `powershell -NoProfile -Command "Set-Clipboard -Path '${escapedPath}'"`;
+    
+    return new Promise((resolve) => {
+      exec(cmd, (err) => {
+        if (err) {
+          console.error('PowerShell copy failed:', err);
+          resolve(false);
+        } else {
+          resolve(true);
+        }
+      });
+    });
+  } catch (e) {
+    console.error('File not found for copying:', e);
+    return false;
+  }
+});
+
 // IPC: Load JSON content from a specified directory
 ipcMain.handle('load-json', async (event, payload) => {
   const { fileName, directory } = payload || {};

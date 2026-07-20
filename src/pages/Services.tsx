@@ -482,6 +482,12 @@ const Services: React.FC = () => {
         receiptHTML = generateThermalStandardReceipt(mockBill, settings, qrData);
     }
 
+    const api = (window as any).electronAPI;
+    if (api?.saveBillPdf) {
+      api.saveBillPdf(mockBill.billNumber, receiptHTML, mockBill.customer?.name)
+        .catch((err: any) => console.error("Failed to auto-save PDF bill:", err));
+    }
+
     // Write to window
     const printWindow = window.open('', '_blank');
     if (printWindow) {

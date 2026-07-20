@@ -561,6 +561,12 @@ const Billing: React.FC = () => {
     }
 
     const api = (window as any).electronAPI;
+    if (api?.saveBillPdf) {
+      const customerName = bill.customer?.name || walkInName;
+      api.saveBillPdf(bill.billNumber, receiptHTML, customerName)
+        .catch((err: any) => console.error("Failed to auto-save PDF bill:", err));
+    }
+
     if (api?.printHtml) {
       try { (printWindow as any).close(); } catch { }
       const selectedReceiptPrinter = localStorage.getItem('receipt_printer_name') || '';

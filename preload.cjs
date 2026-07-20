@@ -3,6 +3,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('electronAPI', {
   listPrinters: () => ipcRenderer.invoke('list-printers'),
   printHtml: (html, options) => ipcRenderer.invoke('print-html', { html, options }),
+  saveBillPdf: (billNumber, htmlContent, customerName) => ipcRenderer.invoke('save-bill-pdf', { billNumber, htmlContent, customerName }),
+  showFileInFolder: (billNumber, customerName) => ipcRenderer.invoke('show-file-in-folder', { billNumber, customerName }),
+  openFile: (billNumber, customerName) => ipcRenderer.invoke('open-file', { billNumber, customerName }),
+  copyFileToClipboard: (billNumber, customerName) => ipcRenderer.invoke('copy-file-to-clipboard', { billNumber, customerName }),
   saveCsv: (fileName, content, subfolder) => ipcRenderer.invoke('save-csv', { fileName, content, subfolder }),
   chooseBackupDirectory: () => ipcRenderer.invoke('choose-backup-dir'),
   saveJson: (fileName, content, directory) => ipcRenderer.invoke('save-json', { fileName, content, directory }),

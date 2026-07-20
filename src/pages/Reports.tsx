@@ -14,9 +14,11 @@ import {
   LineChart,
   Target,
   Printer,
-  Trash2
+  Trash2,
+  Share2
 } from 'lucide-react';
 import { useBills, useProducts, useCustomers } from '../hooks/useDatabase';
+import { ShareModal } from '../components/ShareModal';
 import {
   generateQRData,
   generateThermalCompactReceipt,
@@ -353,6 +355,7 @@ const Reports: React.FC = () => {
   const { bills, refreshBills, deleteBill } = useBills();
   const { products } = useProducts();
   const { customers } = useCustomers();
+  const [sharingBill, setSharingBill] = useState<Bill | null>(null);
 
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
@@ -1040,6 +1043,74 @@ const Reports: React.FC = () => {
     }
   };
 
+  const handleShareBill = (bill: Bill) => {
+    const populatedBill = {
+      ...bill,
+      items: (bill.items || []).map(item => ({
+        ...item,
+        product: products.find(p => p.id === item.productId) || item.product
+      }))
+    };
+
+    const appSettingsRaw = localStorage.getItem('app_settings');
+    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
+    
+    const settings = {
+      storeName: appSettings.storeName || 'SASHVIKA SAREES',
+      upiId: appSettings.upiId || '',
+      bankAccountNumber: appSettings.bankAccountNumber || '',
+      bankIfscCode: appSettings.bankIfscCode || '',
+      accountHolderName: appSettings.accountHolderName || '',
+      address: appSettings.address || '',
+      phone: appSettings.phone || '',
+      gstNumber: appSettings.gstNumber || '',
+      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
+      footerMessage: appSettings.footerMessage || '',
+      logoUrl: appSettings.logoUrl || ''
+    };
+
+    const qrData = generateQRData(populatedBill, settings);
+    const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
+
+    let receiptHTML = '';
+    switch (selectedTemplate) {
+      case 'thermal-compact':
+        receiptHTML = generateThermalCompactReceipt(populatedBill, settings, qrData);
+        break;
+      case 'thermal-detailed':
+        receiptHTML = generateThermalDetailedReceipt(populatedBill, settings, qrData);
+        break;
+      case 'regular-a5':
+        receiptHTML = generateRegularA5Receipt(populatedBill, settings, qrData);
+        break;
+      case 'regular-a4':
+        receiptHTML = generateRegularA4Receipt(populatedBill, settings, qrData);
+        break;
+      case 'regular-a4-detailed':
+        receiptHTML = generateRegularA4DetailedReceipt(populatedBill, settings, qrData);
+        break;
+      case 'thermal-standard':
+      default:
+        receiptHTML = generateThermalStandardReceipt(populatedBill, settings, qrData);
+    }
+
+    const customerName = bill.customer?.name || '';
+
+    const api = (window as any).electronAPI;
+    if (api?.saveBillPdf) {
+      api.saveBillPdf(bill.billNumber, receiptHTML, customerName)
+        .then(() => {
+          setSharingBill(populatedBill);
+        })
+        .catch((err: any) => {
+          console.error("Failed to generate PDF for sharing:", err);
+          setSharingBill(populatedBill);
+        });
+    } else {
+      setSharingBill(populatedBill);
+    }
+  };
+
   const handleDeleteBill = async (id: number, billNumber: string) => {
     if (confirm(`Are you sure you want to permanently delete bill ${billNumber}? This will revert any stock changes and credit balances associated with it.`)) {
       try {
@@ -1680,6 +1751,13 @@ const Reports: React.FC = () => {
                               <Printer className="w-3.5 h-3.5" />
                             </button>
                             <button
+                              onClick={() => handleShareBill(bill)}
+                              className="text-slate-500 hover:text-primary-600 p-1.5 rounded-lg border border-slate-200 bg-white shadow-sm inline-flex items-center"
+                              title="Share Bill"
+                            >
+                              <Share2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => handleDeleteBill(bill.id, bill.billNumber)}
                               className="text-red-500 hover:text-red-700 hover:border-red-300 p-1.5 rounded-lg border border-red-200 bg-white shadow-sm inline-flex items-center"
                               title="Delete Bill"
@@ -1704,6 +1782,9 @@ const Reports: React.FC = () => {
         </div>
       )}
 
+      {sharingBill && (
+        <ShareModal bill={sharingBill} onClose={() => setSharingBill(null)} />
+      )}
     </div>
   );
 };

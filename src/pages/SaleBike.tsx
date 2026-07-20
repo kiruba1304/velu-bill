@@ -790,6 +790,11 @@ const SaleBike: React.FC = () => {
     }
 
     const api = (window as any).electronAPI;
+    if (api?.saveBillPdf) {
+      api.saveBillPdf(bill.billNumber, receiptHTML, bill.customer?.name)
+        .catch((err: any) => console.error("Failed to auto-save PDF bill:", err));
+    }
+
     if (api?.printHtml) {
       try { (printWindow as any).close(); } catch { }
       const selectedReceiptPrinter = localStorage.getItem('receipt_printer_name') || '';
