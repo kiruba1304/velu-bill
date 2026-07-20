@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import { useServices, useCustomers, useBills } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
+import { getStoreSettings } from '../utils/getStoreSettings';
 import { Service, Bill, BillItem } from '../types';
 import {
   generateQRData,
@@ -276,25 +277,7 @@ const Services: React.FC = () => {
 
   const printEstimatedBill = (srv: Service, finalCustomerName: string, finalCustomerPhone: string) => {
     // 1. Fetch store settings
-    const appSettingsRaw = localStorage.getItem('app_settings');
-    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
-    
-    const activeBranch = branches.find(b => Number(b.id) === Number(activeBranchId));
-    
-    const settings = {
-      storeName: activeBranch?.name || appSettings.storeName || 'SAM SERVICES',
-      upiId: activeBranch?.upiId || appSettings.upiId || '',
-      bankAccountNumber: activeBranch?.bankAccountNumber || appSettings.bankAccountNumber || '',
-      bankIfscCode: activeBranch?.bankIfscCode || appSettings.bankIfscCode || '',
-      accountHolderName: activeBranch?.accountHolderName || appSettings.accountHolderName || '',
-      address: activeBranch?.address || appSettings.address || '',
-      phone: activeBranch?.phone || appSettings.phone || '',
-      gstNumber: activeBranch?.gst || appSettings.gstNumber || '',
-      showGst: activeBranch?.showGst !== undefined ? !!activeBranch.showGst : (appSettings.showGst !== undefined ? appSettings.showGst : true),
-      gstInclusive: activeBranch?.gstInclusive !== undefined ? !!activeBranch.gstInclusive : (appSettings.gstInclusive || false),
-      footerMessage: activeBranch?.footerMessage || appSettings.footerMessage || '',
-      logoUrl: activeBranch?.logoUrl || appSettings.logoUrl || ''
-    };
+    const settings = getStoreSettings(srv.branchId, branches, activeBranchId);
 
     // 2. Parse description lines to extract spares, labor, and additionals
     const lines = srv.description ? srv.description.split('\n') : [];

@@ -137,6 +137,7 @@ export interface Bill {
   totalOutstanding?: number;
   netBalance?: number;
   createdBy?: string;
+  branchId?: number | null;
 }
 
 export interface InventoryTransaction {

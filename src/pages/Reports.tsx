@@ -18,6 +18,8 @@ import {
   Share2
 } from 'lucide-react';
 import { useBills, useProducts, useCustomers } from '../hooks/useDatabase';
+import { useAuth } from '../hooks/useAuth';
+import { getStoreSettings } from '../utils/getStoreSettings';
 import { ShareModal } from '../components/ShareModal';
 import {
   generateQRData,
@@ -355,6 +357,7 @@ const Reports: React.FC = () => {
   const { bills, refreshBills, deleteBill } = useBills();
   const { products } = useProducts();
   const { customers } = useCustomers();
+  const { activeBranchId, branches } = useAuth();
   const [sharingBill, setSharingBill] = useState<Bill | null>(null);
 
   const [fromDate, setFromDate] = useState<string>('');
@@ -916,22 +919,7 @@ const Reports: React.FC = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const appSettingsRaw = localStorage.getItem('app_settings');
-    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
-    
-    const settings = {
-      storeName: appSettings.storeName || 'SASHVIKA SAREES',
-      upiId: appSettings.upiId || '',
-      bankAccountNumber: appSettings.bankAccountNumber || '',
-      bankIfscCode: appSettings.bankIfscCode || '',
-      accountHolderName: appSettings.accountHolderName || '',
-      address: appSettings.address || '',
-      phone: appSettings.phone || '',
-      gstNumber: appSettings.gstNumber || '',
-      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
-      footerMessage: appSettings.footerMessage || '',
-      logoUrl: appSettings.logoUrl || ''
-    };
+    const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 
     const qrData = generateQRData(populatedBill, settings);
     const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
@@ -988,22 +976,7 @@ const Reports: React.FC = () => {
       }))
     };
 
-    const appSettingsRaw = localStorage.getItem('app_settings');
-    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
-    
-    const settings = {
-      storeName: appSettings.storeName || 'SASHVIKA SAREES',
-      upiId: appSettings.upiId || '',
-      bankAccountNumber: appSettings.bankAccountNumber || '',
-      bankIfscCode: appSettings.bankIfscCode || '',
-      accountHolderName: appSettings.accountHolderName || '',
-      address: appSettings.address || '',
-      phone: appSettings.phone || '',
-      gstNumber: appSettings.gstNumber || '',
-      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
-      footerMessage: appSettings.footerMessage || '',
-      logoUrl: appSettings.logoUrl || ''
-    };
+    const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 
     const qrData = generateQRData(populatedBill, settings);
     const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';
@@ -1052,22 +1025,7 @@ const Reports: React.FC = () => {
       }))
     };
 
-    const appSettingsRaw = localStorage.getItem('app_settings');
-    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
-    
-    const settings = {
-      storeName: appSettings.storeName || 'SASHVIKA SAREES',
-      upiId: appSettings.upiId || '',
-      bankAccountNumber: appSettings.bankAccountNumber || '',
-      bankIfscCode: appSettings.bankIfscCode || '',
-      accountHolderName: appSettings.accountHolderName || '',
-      address: appSettings.address || '',
-      phone: appSettings.phone || '',
-      gstNumber: appSettings.gstNumber || '',
-      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
-      footerMessage: appSettings.footerMessage || '',
-      logoUrl: appSettings.logoUrl || ''
-    };
+    const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 
     const qrData = generateQRData(populatedBill, settings);
     const selectedTemplate = localStorage.getItem('selected_invoice_template') || 'thermal-standard';

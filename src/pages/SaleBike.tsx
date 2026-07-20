@@ -25,6 +25,8 @@ import {
   useCustomers,
   useBills
 } from '../hooks/useDatabase';
+import { useAuth } from '../hooks/useAuth';
+import { getStoreSettings } from '../utils/getStoreSettings';
 import { BikeServiceReminder, Bill } from '../types';
 import {
   generateQRData,
@@ -49,6 +51,7 @@ const SaleBike: React.FC = () => {
   const { reminders, addReminder, updateReminder, deleteReminder, loading: remindersLoading } = useBikeServiceReminders();
   const { customers, updateCustomer } = useCustomers();
   const { addBill } = useBills();
+  const { activeBranchId, branches } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'catalog' | 'sales' | 'reminders'>('catalog');
 
@@ -743,23 +746,7 @@ const SaleBike: React.FC = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const appSettingsRaw = localStorage.getItem('app_settings');
-    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
-    
-    const settings = {
-      storeName: appSettings.storeName || 'SASHVIKA SAREES',
-      upiId: appSettings.upiId || '',
-      bankAccountNumber: appSettings.bankAccountNumber || '',
-      bankIfscCode: appSettings.bankIfscCode || '',
-      accountHolderName: appSettings.accountHolderName || '',
-      address: appSettings.address || '',
-      phone: appSettings.phone || '',
-      gstNumber: appSettings.gstNumber || '',
-      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
-      gstInclusive: appSettings.gstInclusive || false,
-      footerMessage: appSettings.footerMessage || '',
-      logoUrl: appSettings.logoUrl || ''
-    };
+    const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 
     const qrData = generateQRData(bill, settings);
     

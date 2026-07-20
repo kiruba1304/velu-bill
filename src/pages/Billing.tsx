@@ -22,6 +22,7 @@ import {
   generateRegularA4Receipt,
   generateRegularA4DetailedReceipt
 } from '../utils/templateGenerator';
+import { getStoreSettings } from '../utils/getStoreSettings';
 
 interface BillItemWithProduct extends BillItem {
   product: Product;
@@ -512,25 +513,7 @@ const Billing: React.FC = () => {
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
 
-    const appSettingsRaw = localStorage.getItem('app_settings');
-    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
-    
-    const activeBranch = branches.find(b => Number(b.id) === Number(activeBranchId));
-    
-    const settings = {
-      storeName: activeBranch?.name || appSettings.storeName || 'SASHVIKA SAREES',
-      upiId: activeBranch?.upiId || appSettings.upiId || '',
-      bankAccountNumber: activeBranch?.bankAccountNumber || appSettings.bankAccountNumber || '',
-      bankIfscCode: activeBranch?.bankIfscCode || appSettings.bankIfscCode || '',
-      accountHolderName: activeBranch?.accountHolderName || appSettings.accountHolderName || '',
-      address: activeBranch?.address || appSettings.address || '',
-      phone: activeBranch?.phone || appSettings.phone || '',
-      gstNumber: activeBranch?.gst || appSettings.gstNumber || '',
-      showGst: activeBranch?.showGst !== undefined ? !!activeBranch.showGst : (appSettings.showGst !== undefined ? appSettings.showGst : true),
-      gstInclusive: activeBranch?.gstInclusive !== undefined ? !!activeBranch.gstInclusive : (appSettings.gstInclusive || false),
-      footerMessage: activeBranch?.footerMessage || appSettings.footerMessage || '',
-      logoUrl: activeBranch?.logoUrl || appSettings.logoUrl || ''
-    };
+    const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 
     const qrData = generateQRData(bill, settings);
     

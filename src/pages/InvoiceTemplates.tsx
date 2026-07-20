@@ -1,5 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Eye, Printer, X } from 'lucide-react';
+import { useAuth } from '../hooks/useAuth';
+import { getStoreSettings } from '../utils/getStoreSettings';
 import { Bill } from '../types';
 import {
   generateQRData,
@@ -72,6 +74,7 @@ const TEMPLATES: Template[] = [
 ];
 
 const InvoiceTemplates: React.FC = () => {
+  const { activeBranchId, branches } = useAuth();
   const [selectedTemplate, setSelectedTemplate] = useState<string>('thermal-standard');
   const [category, setCategory] = useState<'all' | 'thermal' | 'regular'>('all');
   const [previewTemplateId, setPreviewTemplateId] = useState<string | null>(null);
@@ -172,22 +175,7 @@ const InvoiceTemplates: React.FC = () => {
       ],
     };
 
-    const appSettingsRaw = localStorage.getItem('app_settings');
-    const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
-
-    const settings = {
-      storeName: appSettings.storeName || 'SASHVIKA SAREES',
-      upiId: appSettings.upiId || 'sample@upi',
-      bankAccountNumber: appSettings.bankAccountNumber || '123456789012',
-      bankIfscCode: appSettings.bankIfscCode || 'SBIN0001234',
-      accountHolderName: appSettings.accountHolderName || 'SASHVIKA SAREES',
-      address: appSettings.address || '32-F, Near Eswaran Temple, Kadaiveethi\nIdappadi – 637101',
-      phone: appSettings.phone || '9965326590, 9047656890',
-      gstNumber: appSettings.gstNumber || '',
-      showGst: appSettings.showGst !== undefined ? appSettings.showGst : true,
-      footerMessage: appSettings.footerMessage || 'Thank you for your business!',
-      logoUrl: appSettings.logoUrl || ''
-    };
+    const settings = getStoreSettings(null, branches, activeBranchId);
 
     const qrData = generateQRData(sampleBill, settings);
 
