@@ -47,3 +47,8 @@ eslint-history.xml
 .env.local
 .env.*.local
 
+# WhatsApp automation cache & session data
+wa_session/
+.wwebjs_cache/
+bills/
+
