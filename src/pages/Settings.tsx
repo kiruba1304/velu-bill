@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Download, Save, Database, Upload, Users, UserPlus, Edit, Trash2, Building2, PhoneCall, MessageSquare, RefreshCw } from 'lucide-react';
+import { Download, Save, Database, Upload, Users, UserPlus, Edit, Trash2, Building2, PhoneCall, MessageSquare, RefreshCw, Monitor, Eye } from 'lucide-react';
 import { useProducts, useCustomers, useBills, useTransactions, useDatabase, useCategories } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
 
@@ -49,6 +49,26 @@ const Settings: React.FC = () => {
   const [waStatus, setWaStatus] = useState<string>('disconnected');
   const [waQrUrl, setWaQrUrl] = useState<string>('');
   const [waUserInfo, setWaUserInfo] = useState<any>(null);
+
+  // Screen Saver State (Default: 5 Minutes / 300 Seconds)
+  const [screensaverTimeout, setScreensaverTimeout] = useState<number>(() => {
+    try {
+      const saved = localStorage.getItem('screensaver_timeout');
+      if (saved !== null) {
+        return parseInt(saved, 10);
+      }
+      localStorage.setItem('screensaver_timeout', '300');
+      return 300;
+    } catch {
+      return 300;
+    }
+  });
+
+  const handleSaveScreensaverSettings = () => {
+    localStorage.setItem('screensaver_timeout', String(screensaverTimeout));
+    window.dispatchEvent(new Event('screensaver-setting-changed'));
+    alert('Screen Saver settings saved successfully!');
+  };
 
   useEffect(() => {
     const api = (window as any).electronAPI;
@@ -122,8 +142,8 @@ const Settings: React.FC = () => {
   const [selectedSettingBranch, setSelectedSettingBranch] = useState<string>('');
   const [branchCategoriesMap, setBranchCategoriesMap] = useState<Record<number, boolean>>({});
 
-  const [selectedCustomerBranch, setSelectedCustomerBranch] = useState<string>('');
-  const [branchCustomersMap, setBranchCustomersMap] = useState<Record<number, boolean>>({});
+  const [sourceBranch, setSourceBranch] = useState<string>('');
+  const [selectedTargetBranches, setSelectedTargetBranches] = useState<string[]>([]);
   const [customerSearchTerm, setCustomerSearchTerm] = useState<string>('');
 
   useEffect(() => {
@@ -189,69 +209,84 @@ const Settings: React.FC = () => {
   };
 
   useEffect(() => {
-    if (branches.length > 0 && !selectedCustomerBranch) {
-      setSelectedCustomerBranch(branches[0].name);
+    if (branches.length > 0 && !sourceBranch) {
+      setSourceBranch(branches[0].name);
     }
   }, [branches]);
 
-  useEffect(() => {
-    if (selectedCustomerBranch) {
-      const map: Record<number, boolean> = {};
-      customers.forEach(c => {
-        const allowed = (c.allowedBranches || '')
-          .split(',')
-          .map(b => b.trim().toLowerCase());
-        map[c.id] = !c.allowedBranches || allowed.includes(selectedCustomerBranch.trim().toLowerCase());
-      });
-      setBranchCustomersMap(map);
-    }
-  }, [selectedCustomerBranch, customers]);
+  const targetBranchesOptions = branches.filter(b => b.name.toLowerCase() !== sourceBranch.toLowerCase());
 
-  const saveBranchCustomerAccess = async () => {
+  const sourceBranchCustomers = customers.filter(c => {
+    if (!c.allowedBranches) return true;
+    const allowed = c.allowedBranches.split(',').map(b => b.trim().toLowerCase());
+    return allowed.includes(sourceBranch.trim().toLowerCase());
+  });
+
+  useEffect(() => {
+    if (!sourceBranch || branches.length === 0) return;
+    const currentTargetNames = targetBranchesOptions.map(b => b.name);
+    const sharedTargets = currentTargetNames.filter(tName => {
+      if (sourceBranchCustomers.length === 0) return false;
+      return sourceBranchCustomers.every(c => {
+        if (!c.allowedBranches) return true;
+        const allowed = c.allowedBranches.split(',').map(b => b.trim().toLowerCase());
+        return allowed.includes(tName.trim().toLowerCase());
+      });
+    });
+
+    setSelectedTargetBranches(sharedTargets);
+  }, [sourceBranch, branches, customers]);
+
+  const handleToggleTargetBranch = (branchName: string) => {
+    setSelectedTargetBranches(prev =>
+      prev.includes(branchName)
+        ? prev.filter(b => b !== branchName)
+        : [...prev, branchName]
+    );
+  };
+
+  const isAllTargetBranchesSelected = targetBranchesOptions.length > 0 &&
+    targetBranchesOptions.every(b => selectedTargetBranches.includes(b.name));
+
+  const handleToggleAllTargetBranches = () => {
+    if (isAllTargetBranchesSelected) {
+      setSelectedTargetBranches([]);
+    } else {
+      setSelectedTargetBranches(targetBranchesOptions.map(b => b.name));
+    }
+  };
+
+  const saveCustomerSharingRules = async () => {
     try {
-      if (!selectedCustomerBranch) {
-        alert('Please select a branch first.');
+      if (!sourceBranch) {
+        alert('Please select a source branch.');
         return;
       }
 
-      for (const customer of customers) {
-        const isAllowedForSelected = !!branchCustomersMap[customer.id];
-        const currentBranches = (customer.allowedBranches || '')
-          .split(',')
-          .map(b => b.trim())
-          .filter(Boolean);
+      if (sourceBranchCustomers.length === 0) {
+        alert(`No customers found for source branch "${sourceBranch}".`);
+        return;
+      }
 
-        let updatedBranches;
+      const allCompanyBranchNames = branches.map(b => b.name);
+      const targetList = [sourceBranch, ...selectedTargetBranches];
 
-        let resolvedBranches = currentBranches;
-        if (currentBranches.length === 0 && !customer.allowedBranches) {
-          resolvedBranches = branches.map(b => b.name);
-        }
+      const isAll = allCompanyBranchNames.every(name =>
+        targetList.some(t => t.toLowerCase() === name.toLowerCase())
+      );
 
-        const existsInResolved = resolvedBranches.some(b => b.toLowerCase() === selectedCustomerBranch.toLowerCase());
+      const allowedStr = isAll ? '' : Array.from(new Set(targetList)).join(',');
 
-        if (isAllowedForSelected && !existsInResolved) {
-          updatedBranches = [...resolvedBranches, selectedCustomerBranch];
-        } else if (!isAllowedForSelected && existsInResolved) {
-          updatedBranches = resolvedBranches.filter(b => b.toLowerCase() !== selectedCustomerBranch.toLowerCase());
-        } else {
-          continue; // No change needed
-        }
-
-        const allBranchNames = branches.map(b => b.name.toLowerCase());
-        const updatedBranchNamesLower = updatedBranches.map(b => b.toLowerCase());
-        const isAll = allBranchNames.every(name => updatedBranchNamesLower.includes(name));
-
-        const allowedBranchesStr = isAll ? '' : updatedBranches.join(',');
-
+      for (const customer of sourceBranchCustomers) {
         await updateCustomer(customer.id, {
-          allowedBranches: allowedBranchesStr
+          allowedBranches: allowedStr
         });
       }
-      alert('Branch-based customer access settings saved successfully!');
-    } catch (e) {
-      console.error('Failed to save branch customer settings:', e);
-      alert('Failed to save settings. Please try again.');
+
+      alert(`Customer sharing rules saved successfully! Customers of "${sourceBranch}" are now shared with selected branch(es).`);
+    } catch (e: any) {
+      console.error('Failed to save customer sharing rules:', e);
+      alert('Failed to save sharing rules: ' + (e.message || String(e)));
     }
   };
 
@@ -1008,10 +1043,20 @@ const Settings: React.FC = () => {
                 </span>
               )}
               {waStatus === 'loading' && (
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 border border-blue-200">
-                  <RefreshCw className="h-3 w-3 animate-spin" />
-                  Initializing...
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 border border-blue-200">
+                    <RefreshCw className="h-3 w-3 animate-spin" />
+                    Initializing...
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleDisconnectWhatsApp}
+                    className="text-xs text-slate-400 hover:text-red-600 underline font-semibold"
+                    title="Force Reset WhatsApp Connection"
+                  >
+                    Reset
+                  </button>
+                </div>
               )}
               {waStatus === 'disconnected' && (
                 <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs font-bold text-slate-600 border border-slate-200">
@@ -1303,6 +1348,61 @@ const Settings: React.FC = () => {
             <button onClick={savePrinterSettings} className="btn-primary inline-flex items-center gap-2 px-4 py-2 mt-2">
               <Save className="h-4 w-4" /> Save Printer Settings
             </button>
+          </div>
+        </div>
+
+        {/* Screen Saver Settings Card */}
+        <div className="card border border-white/60 bg-white/85 shadow-soft">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h2 className="text-xl font-semibold text-slate-900 flex items-center gap-2">
+                <Monitor className="h-5 w-5 text-indigo-600" />
+                Screen Saver Settings
+              </h2>
+              <p className="text-xs text-slate-500 mt-1">
+                Automatically display showroom full screen image when no user activity is detected.
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1 block text-sm font-medium text-slate-700">Inactivity Timeout</label>
+              <select
+                value={screensaverTimeout}
+                onChange={(e) => setScreensaverTimeout(Number(e.target.value))}
+                className="input py-2 bg-white rounded-xl shadow-sm border-slate-200 w-full"
+              >
+                <option value={0}>Disabled (Off)</option>
+                <option value={15}>15 Seconds</option>
+                <option value={30}>30 Seconds</option>
+                <option value={60}>1 Minute</option>
+                <option value={120}>2 Minutes</option>
+                <option value={180}>3 Minutes</option>
+                <option value={300}>5 Minutes</option>
+                <option value={600}>10 Minutes</option>
+              </select>
+              <p className="text-xs text-slate-400 mt-1">
+                If no keyboard, mouse, or touch input occurs for this duration, the fullscreen image screensaver will activate.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                type="button"
+                onClick={handleSaveScreensaverSettings}
+                className="btn-primary flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl"
+              >
+                <Save className="h-4 w-4" /> Save Screen Saver Setting
+              </button>
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new Event('trigger-screensaver-preview'))}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl border border-slate-200 transition-all"
+              >
+                <Eye className="h-4 w-4" /> Preview Now
+              </button>
+            </div>
           </div>
         </div>
 
@@ -1806,106 +1906,119 @@ const Settings: React.FC = () => {
           <div className="card border border-white/60 bg-white/85 shadow-soft lg:col-span-2">
             <div className="flex items-center gap-3 mb-4">
               <Users className="h-6 w-6 text-primary-600" />
-              <h2 className="text-xl font-semibold text-slate-900">Branch-Based Customer Access Control</h2>
+              <h2 className="text-xl font-semibold text-slate-900">Branch Customer Sharing Control</h2>
             </div>
             <p className="text-sm text-slate-600 mb-6">
-              Configure which customers are visible and accessible in each store branch. Customers who are unchecked will be hidden in that branch.
+              Select a <strong>Source Branch</strong> on the left to view its customers, then choose which <strong>Target Branches</strong> on the right can access these customers.
             </p>
 
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-              <div className="max-w-xs w-full">
-                <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">Select Store Branch</label>
-                <select
-                  value={selectedCustomerBranch}
-                  onChange={(e) => setSelectedCustomerBranch(e.target.value)}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs text-slate-800 outline-none focus:border-primary-500 cursor-pointer font-bold"
-                >
-                  {branches.map(b => (
-                    <option key={b.id} value={b.name}>
-                      {b.name}
-                    </option>
-                  ))}
-                </select>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+              {/* Left Side: Source Branch Selection & Customers List */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200">
+                <div className="mb-4">
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                    1. Select Source Branch (Owner Branch)
+                  </label>
+                  <select
+                    value={sourceBranch}
+                    onChange={(e) => setSourceBranch(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 outline-none focus:border-primary-500 cursor-pointer"
+                  >
+                    {branches.map(b => (
+                      <option key={b.id} value={b.name}>
+                        {b.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="mb-3 flex items-center justify-between">
+                  <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+                    Customers of {sourceBranch} ({sourceBranchCustomers.length})
+                  </span>
+                  <input
+                    type="text"
+                    placeholder="Search name or phone..."
+                    value={customerSearchTerm}
+                    onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                    className="input py-1 px-3 text-xs w-48 bg-white border-slate-200"
+                  />
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-60 overflow-y-auto p-2 rounded-xl bg-white border border-slate-200">
+                  {sourceBranchCustomers.length === 0 ? (
+                    <p className="text-xs text-slate-400 italic col-span-full py-4 text-center">No customers found for {sourceBranch}.</p>
+                  ) : (
+                    (() => {
+                      const filtered = sourceBranchCustomers.filter(c =>
+                        c.name.toLowerCase().includes(customerSearchTerm.toLowerCase()) ||
+                        c.phone.includes(customerSearchTerm)
+                      );
+                      if (filtered.length === 0) {
+                        return <p className="text-xs text-slate-400 italic col-span-full py-4 text-center">No matching customers found.</p>;
+                      }
+                      return filtered.map(customer => (
+                        <div key={customer.id} className="p-2.5 rounded-xl bg-slate-50 border border-slate-100 flex flex-col min-w-0">
+                          <span className="text-xs font-bold text-slate-800 truncate">{customer.name}</span>
+                          <span className="text-[10px] text-slate-500 font-mono truncate">{customer.phone}</span>
+                        </div>
+                      ));
+                    })()
+                  )}
+                </div>
               </div>
 
-              {(isSuperAdmin || isAdmin) && (
-                <div className="flex gap-2 self-end">
-                  <button
-                    onClick={() => {
-                      const newMap = { ...branchCustomersMap };
-                      customers.forEach(c => {
-                        newMap[c.id] = true;
-                      });
-                      setBranchCustomersMap(newMap);
-                    }}
-                    className="btn btn-secondary py-2 px-3 text-xs"
-                  >
-                    Enable for All Customers
-                  </button>
-                  <button
-                    onClick={() => {
-                      const newMap = { ...branchCustomersMap };
-                      customers.forEach(c => {
-                        newMap[c.id] = false;
-                      });
-                      setBranchCustomersMap(newMap);
-                    }}
-                    className="btn btn-secondary py-2 px-3 text-xs"
-                  >
-                    Disable for All Customers
-                  </button>
+              {/* Right Side: Target Branches to Share With */}
+              <div className="p-4 rounded-2xl bg-slate-50 border border-slate-200 flex flex-col justify-between">
+                <div>
+                  <label className="text-xs font-bold text-slate-700 uppercase tracking-wider block mb-1">
+                    2. Select Target Branches to Share With
+                  </label>
+                  <p className="text-xs text-slate-500 mb-4">
+                    Check the branches below that should have permission to view & bill <strong>{sourceBranch}</strong>'s customers.
+                  </p>
+
+                  {/* Select All Branches Checkbox */}
+                  <label className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-200 hover:bg-slate-100/70 transition-colors cursor-pointer select-none mb-3">
+                    <input
+                      type="checkbox"
+                      checked={isAllTargetBranchesSelected}
+                      disabled={!isSuperAdmin && !isAdmin}
+                      onChange={() => (isSuperAdmin || isAdmin) && handleToggleAllTargetBranches()}
+                      className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 disabled:opacity-60"
+                    />
+                    <span className="text-xs font-bold text-slate-900">Select All Branches</span>
+                  </label>
+
+                  <div className="space-y-2 max-h-52 overflow-y-auto pr-1">
+                    {targetBranchesOptions.length === 0 ? (
+                      <p className="text-xs text-slate-400 italic">No other branches available.</p>
+                    ) : (
+                      targetBranchesOptions.map(b => (
+                        <label key={b.id} className="flex items-center gap-3 p-3 rounded-xl bg-white border border-slate-200 hover:bg-slate-100/70 transition-colors cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={selectedTargetBranches.includes(b.name)}
+                            disabled={!isSuperAdmin && !isAdmin}
+                            onChange={() => (isSuperAdmin || isAdmin) && handleToggleTargetBranch(b.name)}
+                            className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 disabled:opacity-60"
+                          />
+                          <span className="text-xs font-semibold text-slate-800">{b.name}</span>
+                        </label>
+                      ))
+                    )}
+                  </div>
                 </div>
-              )}
-            </div>
-
-            <div className="mb-4">
-              <input
-                type="text"
-                placeholder="Search customers by name or phone..."
-                value={customerSearchTerm}
-                onChange={(e) => setCustomerSearchTerm(e.target.value)}
-                className="input w-full max-w-sm text-xs"
-              />
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 mb-6 max-h-60 overflow-y-auto p-2 border border-slate-100 rounded-2xl bg-slate-50/50">
-              {customers.length === 0 ? (
-                <p className="text-sm text-slate-500 italic col-span-full">No customers found.</p>
-              ) : (
-                (() => {
-                  const filtered = customers.filter(c =>
-                    c.name.toLowerCase().includes(customerSearchTerm.toLowerCase()) ||
-                    c.phone.includes(customerSearchTerm)
-                  );
-                  if (filtered.length === 0) {
-                    return <p className="text-sm text-slate-500 italic col-span-full">No matching customers found.</p>;
-                  }
-                  return filtered.map(customer => (
-                    <label key={customer.id} className="flex items-center gap-3 p-2.5 rounded-xl bg-white border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer select-none">
-                      <input
-                        type="checkbox"
-                        checked={!!branchCustomersMap[customer.id]}
-                        disabled={!isSuperAdmin && !isAdmin}
-                        onChange={() => (isSuperAdmin || isAdmin) && setBranchCustomersMap(prev => ({ ...prev, [customer.id]: !prev[customer.id] }))}
-                        className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500 disabled:opacity-60"
-                      />
-                      <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-bold text-slate-800 truncate">{customer.name}</span>
-                        <span className="text-[10px] text-slate-500 font-mono truncate">{customer.phone}</span>
-                      </div>
-                    </label>
-                  ));
-                })()
-              )}
+              </div>
             </div>
 
             {(isSuperAdmin || isAdmin) && (
               <button
-                onClick={saveBranchCustomerAccess}
-                className="btn-primary inline-flex items-center gap-2 px-5 py-2"
+                onClick={saveCustomerSharingRules}
+                className="btn-primary inline-flex items-center gap-2 px-5 py-2.5 font-bold rounded-xl"
               >
                 <Save className="h-4 w-4" />
-                Save Customer Access Rules
+                Save Customer Sharing Rules
               </button>
             )}
           </div>

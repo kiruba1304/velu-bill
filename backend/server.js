@@ -384,10 +384,23 @@ async function initDb() {
       status VARCHAR(50) DEFAULT 'pending',
       notes TEXT,
       branchId INT NULL DEFAULT 1,
+      ivrCallCount INT DEFAULT 0,
+      lastIvrCallDate VARCHAR(255) NULL,
+      ivrLogs TEXT NULL,
+      waSentCount INT DEFAULT 0,
+      lastWaSentDate VARCHAR(255) NULL,
+      waLogs TEXT NULL,
       createdAt VARCHAR(255),
       updatedAt VARCHAR(255)
     )
   `);
+
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN ivrCallCount INT DEFAULT 0`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN lastIvrCallDate VARCHAR(255) NULL`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN ivrLogs TEXT NULL`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN waSentCount INT DEFAULT 0`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN lastWaSentDate VARCHAR(255) NULL`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN waLogs TEXT NULL`); } catch (e) {}
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS MonthlyAccounts (
@@ -1945,7 +1958,11 @@ async function _executeDbCallInner(method, args) {
       const [rows] = (branchId === 0)
         ? await pool.query('SELECT * FROM BikeServiceReminders ORDER BY id DESC')
         : await pool.query('SELECT * FROM BikeServiceReminders WHERE branchId = ? ORDER BY id DESC', [branchId || 1]);
-      return rows;
+      return rows.map(r => ({
+        ...r,
+        ivrLogs: parseJsonField(r.ivrLogs),
+        waLogs: parseJsonField(r.waLogs)
+      }));
     }
     case 'createBikeServiceReminder': {
       const [reminderData, branchId] = args;

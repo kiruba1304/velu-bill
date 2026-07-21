@@ -205,6 +205,20 @@ export interface Bike {
   updatedAt: string;
 }
 
+export interface IvrLogEntry {
+  timestamp: string;
+  type: 'auto' | 'manual';
+  status: 'success' | 'failed';
+  message?: string;
+}
+
+export interface WaLogEntry {
+  timestamp: string;
+  type: 'auto' | 'manual';
+  status: 'success' | 'failed';
+  message?: string;
+}
+
 export interface BikeServiceReminder {
   id: number;
   bikeId: number;
@@ -217,6 +231,12 @@ export interface BikeServiceReminder {
   status: 'pending' | 'overdue' | 'completed';
   notes?: string;
   branchId?: number;
+  ivrCallCount?: number;
+  lastIvrCallDate?: string | null;
+  ivrLogs?: IvrLogEntry[] | string;
+  waSentCount?: number;
+  lastWaSentDate?: string | null;
+  waLogs?: WaLogEntry[] | string;
   createdAt: string;
   updatedAt: string;
 }

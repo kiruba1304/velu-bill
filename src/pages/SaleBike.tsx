@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Bike as BikeIcon, 
   Plus, 
@@ -17,7 +17,9 @@ import {
   ChevronRight,
   Pencil,
   Printer,
-  Download
+  Download,
+  X,
+  MessageSquare
 } from 'lucide-react';
 import { 
   useBikes, 
@@ -27,7 +29,7 @@ import {
 } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
 import { getStoreSettings } from '../utils/getStoreSettings';
-import { BikeServiceReminder, Bill } from '../types';
+import { BikeServiceReminder, Bill, IvrLogEntry, WaLogEntry } from '../types';
 import {
   generateQRData,
   generateThermalCompactReceipt,
@@ -38,6 +40,9 @@ import {
   generateRegularA4DetailedReceipt
 } from '../utils/templateGenerator';
 import { jsPDF } from 'jspdf';
+import { executeIvrCall } from '../utils/triggerIvrCall';
+import { generateServiceWhatsAppMessage, generateVisitCompletedWhatsAppMessage, generateOverdueWhatsAppMessage } from '../utils/generateServiceWhatsAppMessage';
+import { generateWhatsAppMessage } from '../utils/generateWhatsAppMessage';
 
 const addDays = (dateStr: string, days: number): string => {
   const d = new Date(dateStr);
@@ -54,6 +59,24 @@ const SaleBike: React.FC = () => {
   const { activeBranchId, branches } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'catalog' | 'sales' | 'reminders'>('catalog');
+
+  // IVR History Modal State
+  const [selectedIvrReminder, setSelectedIvrReminder] = useState<BikeServiceReminder | null>(null);
+  const [isCallingIvr, setIsCallingIvr] = useState(false);
+
+  // WhatsApp History Modal State
+  const [selectedWaReminder, setSelectedWaReminder] = useState<BikeServiceReminder | null>(null);
+
+  useEffect(() => {
+    if (selectedIvrReminder) {
+      const fresh = reminders.find(r => r.id === selectedIvrReminder.id);
+      if (fresh) setSelectedIvrReminder(fresh);
+    }
+    if (selectedWaReminder) {
+      const fresh = reminders.find(r => r.id === selectedWaReminder.id);
+      if (fresh) setSelectedWaReminder(fresh);
+    }
+  }, [reminders]);
 
   // Catalog tab states
   const [showAddBikeModal, setShowAddBikeModal] = useState(false);
@@ -438,7 +461,7 @@ const SaleBike: React.FC = () => {
       for (const interval of serviceIntervals) {
         // Compute targets
         const targetDue = addDays(runningDate, interval.days);
-        const targetReminder = addDays(targetDue, 1);
+        const targetReminder = addDays(targetDue, -1);
         
         await addReminder({
           bikeId: bike.id,
@@ -457,7 +480,23 @@ const SaleBike: React.FC = () => {
       }
 
       // Print the Bill Receipt
-      printReceipt(tempBill);
+      const pdfSavingPromise = printReceipt(tempBill);
+
+      // Trigger background WhatsApp Web Auto-Send if customer phone is present
+      const customerPhone = customer?.phone;
+      if (customerPhone) {
+        const api = (window as any).electronAPI;
+        if (api?.sendWhatsAppAuto) {
+          const { text, customerName } = generateWhatsAppMessage(tempBill, branches, activeBranchId, []);
+          Promise.resolve(pdfSavingPromise).then(() => {
+            setTimeout(() => {
+              api.sendWhatsAppAuto(customerPhone, text, tempBill.billNumber, customerName)
+                .then(() => console.log('WhatsApp bike sale invoice auto-sent successfully with PDF!'))
+                .catch((err: any) => console.log('WhatsApp auto-send info:', err?.message || String(err)));
+            }, 300);
+          });
+        }
+      }
 
       // Reset Form States
       setSelectedBikeId('');
@@ -494,7 +533,7 @@ const SaleBike: React.FC = () => {
 
       if (nextReminder) {
         const nextDue = addDays(actualVisitDate, nextReminder.scheduledDays);
-        const nextReminderDate = addDays(nextDue, 1);
+        const nextReminderDate = addDays(nextDue, -1);
         
         await updateReminder(nextReminder.id, {
           scheduledDate: nextDue,
@@ -503,9 +542,67 @@ const SaleBike: React.FC = () => {
         });
       }
 
+      // 3. Automated WhatsApp Confirmation on Visit Completion
+      const cust = customers.find(c => c.id === loggingVisit.customerId);
+      const bike = bikes.find(b => b.id === loggingVisit.bikeId);
+      const storeSettings = getStoreSettings();
+      const storeName = storeSettings.storeName || 'SAM Motors';
+
+      if (cust && cust.phone) {
+        const messageText = generateVisitCompletedWhatsAppMessage(
+          loggingVisit,
+          nextReminder,
+          cust,
+          bike,
+          actualVisitDate,
+          storeSettings.storeName,
+          storeSettings.address,
+          storeSettings.phone
+        );
+
+        const nowIso = new Date().toISOString();
+        const existingLogs: WaLogEntry[] = Array.isArray(loggingVisit.waLogs)
+          ? loggingVisit.waLogs
+          : (typeof loggingVisit.waLogs === 'string' && loggingVisit.waLogs ? JSON.parse(loggingVisit.waLogs) : []);
+
+        const newLog: WaLogEntry = {
+          timestamp: nowIso,
+          type: 'auto',
+          status: 'success',
+          message: 'Visit completion WhatsApp sent'
+        };
+
+        const api = (window as any).electronAPI;
+        let isSent = false;
+        if (api && api.sendWhatsAppAuto) {
+          try {
+            await api.sendWhatsAppAuto(cust.phone, messageText, null, cust.name);
+            isSent = true;
+          } catch (waErr) {
+            console.warn('Auto WhatsApp for Log Visit failed:', waErr);
+          }
+        }
+
+        if (!isSent) {
+          const cleanPhone = String(cust.phone).replace(/\D/g, '');
+          const finalPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+          const waUrl = `https://api.whatsapp.com/send?phone=${finalPhone}&text=${encodeURIComponent(messageText)}`;
+          window.open(waUrl, '_blank');
+          isSent = true;
+        }
+
+        if (isSent) {
+          await updateReminder(loggingVisit.id, {
+            waSentCount: (loggingVisit.waSentCount || 0) + 1,
+            lastWaSentDate: nowIso,
+            waLogs: JSON.stringify([newLog, ...existingLogs])
+          });
+        }
+      }
+
       setLoggingVisit(null);
       setVisitNotes('');
-      alert('Service visit logged and next maintenance cycle updated!');
+      alert('Service visit logged, WhatsApp confirmation sent, and next maintenance cycle updated!');
     } catch (err) {
       console.error(err);
       alert('Failed to update service record.');
@@ -517,6 +614,9 @@ const SaleBike: React.FC = () => {
     if (!editingReminder) return;
 
     try {
+      const todayStr = new Date().toISOString().split('T')[0];
+      const isNowOverdue = editFormData.status === 'overdue' || (editFormData.status === 'pending' && todayStr > editFormData.scheduledDate);
+
       await updateReminder(editingReminder.id, {
         scheduledDays: editFormData.scheduledDays,
         scheduledDate: editFormData.scheduledDate,
@@ -525,6 +625,15 @@ const SaleBike: React.FC = () => {
         actualVisitDate: editFormData.status === 'completed' ? editFormData.actualVisitDate : null,
         notes: editFormData.status === 'completed' ? editFormData.notes.trim() : ''
       });
+
+      if (isNowOverdue) {
+        const updatedRecord = {
+          ...editingReminder,
+          status: editFormData.status,
+          scheduledDate: editFormData.scheduledDate
+        };
+        await handleSendWhatsAppAlert(updatedRecord as any, 'manual');
+      }
 
       setEditingReminder(null);
       alert('Service reminder updated successfully!');
@@ -734,12 +843,13 @@ const SaleBike: React.FC = () => {
   const generateBillNumber = () => {
     const now = new Date();
     const yyyymmdd = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
-    const key = `bill_counter_${yyyymmdd}`;
+    const branch = activeBranchId || 1;
+    const key = `sb_bill_counter_branch_${branch}_${yyyymmdd}`;
     let counter = parseInt(localStorage.getItem(key) || '0', 10);
     counter += 1;
     localStorage.setItem(key, String(counter));
     const seq = String(counter).padStart(2, '0');
-    return `${yyyymmdd}-${seq}`;
+    return `SB${branch}-${yyyymmdd}-${seq}`;
   };
 
   const printReceipt = (bill: Bill) => {
@@ -777,9 +887,13 @@ const SaleBike: React.FC = () => {
     }
 
     const api = (window as any).electronAPI;
+    let pdfPromise = Promise.resolve(true);
     if (api?.saveBillPdf) {
-      api.saveBillPdf(bill.billNumber, receiptHTML, bill.customer?.name)
-        .catch((err: any) => console.error("Failed to auto-save PDF bill:", err));
+      pdfPromise = api.saveBillPdf(bill.billNumber, receiptHTML, bill.customer?.name)
+        .catch((err: any) => {
+          console.error("Failed to auto-save PDF bill:", err);
+          return false;
+        });
     }
 
     if (api?.printHtml) {
@@ -794,11 +908,12 @@ const SaleBike: React.FC = () => {
           }
           alert('Print failed: ' + errMsg);
         });
-      return;
+      return pdfPromise;
     }
 
     (printWindow as any).document.write(receiptHTML);
     (printWindow as any).document.close();
+    return pdfPromise;
   };
 
   const handleEditBikeSellingPriceChange = (val: string) => {
@@ -1022,104 +1137,63 @@ const SaleBike: React.FC = () => {
     }
   };
 
-  const triggerIvrCall = async (reminder: BikeServiceReminder) => {
-    const rawSettings = localStorage.getItem('app_settings');
-    if (!rawSettings) {
-      alert('IVR Settings are not configured. Please configure them in Settings page.');
-      return;
-    }
-    const settings = JSON.parse(rawSettings);
-    const { 
-      ivrApiUrl, 
-      ivrApiKey, 
-      ivrCallerId, 
-      ivrVirtualNumber, 
-      ivrMethod, 
-      ivrPayloadTemplate,
-      ivrApiId,
-      ivrApiPassword,
-      ivrVendorAccountId,
-      ivrDuration,
-      ivrVoiceNote,
-      ivrTitle
-    } = settings;
 
-    if (!ivrApiUrl) {
-      alert('IVR API URL is not configured. Please configure it in Settings under Super Admin.');
-      return;
-    }
 
+  const handleSendWhatsAppAlert = async (reminder: BikeServiceReminder, type: 'auto' | 'manual' = 'manual') => {
     const cust = customers.find(c => c.id === reminder.customerId);
     const bike = bikes.find(b => b.id === reminder.bikeId);
+    const storeSettings = getStoreSettings();
+    const storeName = storeSettings.storeName || 'SAM Motors';
 
-    const customerPhone = cust?.phone || '';
-    const customerName = cust?.name || '';
-    const bikeModel = bike ? `${bike.brand} ${bike.modelName}` : '';
-    const serviceNo = String(reminder.serviceNo);
-    const scheduledDate = reminder.scheduledDate;
-
-    if (!customerPhone) {
+    if (!cust || !cust.phone) {
       alert('Customer has no phone number registered.');
       return;
     }
 
-    const replacePlaceholders = (str: string) => {
-      if (!str) return '';
-      return str
-        .replace(/{api_key}/g, ivrApiKey || '')
-        .replace(/{virtual_number}/g, ivrVirtualNumber || '')
-        .replace(/{caller_id}/g, ivrCallerId || '')
-        .replace(/{api_id}/g, ivrApiId || '')
-        .replace(/{api_password}/g, ivrApiPassword || '')
-        .replace(/{vendor_account_id}/g, ivrVendorAccountId || '')
-        .replace(/{voice_note}/g, ivrVoiceNote || '')
-        .replace(/{duration}/g, ivrDuration || '')
-        .replace(/{title}/g, ivrTitle || '')
-        .replace(/{customer_phone}/g, customerPhone)
-        .replace(/{customer_name}/g, customerName)
-        .replace(/{bike_model}/g, bikeModel)
-        .replace(/{service_no}/g, serviceNo)
-        .replace(/{scheduled_date}/g, scheduledDate);
-    };
+    const todayStr = new Date().toISOString().split('T')[0];
+    const isOverdue = reminder.status === 'overdue' || (reminder.status === 'pending' && todayStr > reminder.scheduledDate);
 
-    const finalUrl = replacePlaceholders(ivrApiUrl);
-    const method = ivrMethod || 'POST';
-    let body: any = null;
-    let headers: any = {};
+    const messageText = isOverdue
+      ? generateOverdueWhatsAppMessage(reminder, cust, bike, storeSettings.storeName, storeSettings.address, storeSettings.phone)
+      : generateServiceWhatsAppMessage(reminder, cust, bike, storeSettings.storeName, storeSettings.address, storeSettings.phone);
+    const nowIso = new Date().toISOString();
+    const existingLogs = Array.isArray(reminder.waLogs)
+      ? reminder.waLogs
+      : (typeof reminder.waLogs === 'string' && reminder.waLogs ? JSON.parse(reminder.waLogs) : []);
 
-    if (ivrPayloadTemplate) {
-      const filledTemplate = replacePlaceholders(ivrPayloadTemplate);
-      if (method === 'POST') {
-        try {
-          JSON.parse(filledTemplate);
-          body = filledTemplate;
-          headers['Content-Type'] = 'application/json';
-        } catch {
-          body = filledTemplate;
-          headers['Content-Type'] = 'application/x-www-form-urlencoded';
-        }
+    const api = (window as any).electronAPI;
+    let isSent = false;
+
+    if (api && api.sendWhatsAppAuto) {
+      try {
+        await api.sendWhatsAppAuto(cust.phone, messageText, null, cust.name);
+        alert(`WhatsApp Service Alert sent successfully to ${cust.name}!`);
+        isSent = true;
+      } catch (err: any) {
+        console.warn('Auto WhatsApp failed, falling back to Web WhatsApp:', err?.message || err);
       }
     }
 
-    try {
-      const options: RequestInit = {
-        method,
-        headers
-      };
-      if (body && method !== 'GET' && method !== 'HEAD') {
-        options.body = body;
-      }
+    if (!isSent) {
+      const cleanPhone = String(cust.phone).replace(/\D/g, '');
+      const finalPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+      const waUrl = `https://api.whatsapp.com/send?phone=${finalPhone}&text=${encodeURIComponent(messageText)}`;
+      window.open(waUrl, '_blank');
+      isSent = true;
+    }
 
-      const response = await fetch(finalUrl, options);
-      const resText = await response.text();
-      if (response.ok) {
-        alert('IVR Reminder Call triggered successfully!');
-      } else {
-        alert(`IVR Call failed: Server responded with status ${response.status}. Response: ${resText}`);
-      }
-    } catch (err: any) {
-      console.error('Error triggering IVR call:', err);
-      alert(`Failed to trigger IVR call: ${err.message || String(err)}`);
+    if (isSent) {
+      const newLog = {
+        timestamp: nowIso,
+        type,
+        status: 'success',
+        message: 'WhatsApp alert sent'
+      };
+      await updateReminder(reminder.id, {
+        waSentCount: (reminder.waSentCount || 0) + 1,
+        lastWaSentDate: nowIso,
+        waLogs: JSON.stringify([newLog, ...existingLogs])
+      });
     }
   };
 
@@ -1206,7 +1280,7 @@ const SaleBike: React.FC = () => {
     if (!textMatch) return false;
 
     const todayStr = new Date().toISOString().split('T')[0];
-    const isOverdue = r.status === 'pending' && todayStr > r.scheduledDate;
+    const isOverdue = r.status === 'overdue' || (r.status === 'pending' && todayStr > r.scheduledDate);
 
     if (reminderStatusFilter === 'completed') return r.status === 'completed';
     if (reminderStatusFilter === 'overdue') return isOverdue;
@@ -1225,7 +1299,7 @@ const SaleBike: React.FC = () => {
         
       const matched = bikeReminders.filter(r => filteredReminders.some(fr => fr.id === r.id));
       
-      let displayReminder = matched.find(r => r.status === 'pending');
+      let displayReminder = matched.find(r => r.status === 'pending' || r.status === 'overdue');
       if (!displayReminder) {
         displayReminder = matched[matched.length - 1];
       }
@@ -1735,7 +1809,7 @@ const SaleBike: React.FC = () => {
                 Service Calculations Rule:
               </p>
               <ul className="list-disc pl-4 space-y-1">
-                <li>**Service 1** triggers **{serviceIntervals[0]?.days || 15} days** after sale (reminder alert on day **{(serviceIntervals[0]?.days || 15) + 1}**).</li>
+                <li>**Service 1** triggers **{serviceIntervals[0]?.days || 15} days** after sale (reminder alert on day **{(serviceIntervals[0]?.days || 15) - 1}**).</li>
                 <li>**Service 2** triggers **{serviceIntervals[1]?.days || 30} days** after **Service 1 actual visit** date.</li>
               </ul>
             </div>
@@ -1793,6 +1867,8 @@ const SaleBike: React.FC = () => {
                     <th className="p-3">Due Date</th>
                     <th className="p-3">Alert Date</th>
                     <th className="p-3">Status</th>
+                    <th className="p-3">IVR Status</th>
+                    <th className="p-3">WA Status</th>
                     <th className="p-3">Actual Visit</th>
                     <th className="p-3 text-right">Actions</th>
                   </tr>
@@ -1803,7 +1879,7 @@ const SaleBike: React.FC = () => {
                     if (!r) return null;
                     const isExpanded = !!expandedReminderGroups[group.bikeId];
                     const todayStr = new Date().toISOString().split('T')[0];
-                    const isOverdue = r.status === 'pending' && todayStr > r.scheduledDate;
+                    const isOverdue = r.status === 'overdue' || (r.status === 'pending' && todayStr > r.scheduledDate);
 
                     return (
                       <React.Fragment key={`group-${group.bikeId}`}>
@@ -1851,6 +1927,46 @@ const SaleBike: React.FC = () => {
                               <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md font-bold text-[9px] border border-amber-250">Pending</span>
                             )}
                           </td>
+                          <td className="p-3">
+                            {(r.ivrCallCount || 0) > 0 ? (
+                              <button 
+                                onClick={() => setSelectedIvrReminder(r)}
+                                className="px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md font-bold text-[9px] border border-indigo-200 inline-flex items-center gap-1 transition-all"
+                                title="Click to view IVR Call History"
+                              >
+                                <PhoneCall className="w-2.5 h-2.5" />
+                                Called ({r.ivrCallCount})
+                              </button>
+                            ) : (
+                              <button 
+                                onClick={() => setSelectedIvrReminder(r)}
+                                className="text-[10px] text-slate-400 hover:text-indigo-600 font-medium hover:underline flex items-center gap-1"
+                                title="Click to view IVR Call History"
+                              >
+                                Not Called
+                              </button>
+                            )}
+                          </td>
+                          <td className="p-3">
+                            {(r.waSentCount || 0) > 0 ? (
+                              <button 
+                                onClick={() => setSelectedWaReminder(r)}
+                                className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-md font-bold text-[9px] border border-emerald-200 inline-flex items-center gap-1 transition-all"
+                                title="Click to view WhatsApp Alert History"
+                              >
+                                <MessageSquare className="w-2.5 h-2.5" />
+                                Sent ({r.waSentCount})
+                              </button>
+                            ) : (
+                              <button 
+                                onClick={() => setSelectedWaReminder(r)}
+                                className="text-[10px] text-slate-400 hover:text-emerald-600 font-medium hover:underline flex items-center gap-1"
+                                title="Click to view WhatsApp Alert History"
+                              >
+                                Not Sent
+                              </button>
+                            )}
+                          </td>
                           <td className="p-3 font-mono text-slate-700">
                             {r.actualVisitDate || '-'}
                           </td>
@@ -1859,11 +1975,18 @@ const SaleBike: React.FC = () => {
                               {r.status === 'pending' && (
                                 <>
                                   <button
-                                    onClick={() => triggerIvrCall(r)}
+                                    onClick={() => setSelectedIvrReminder(r)}
                                     className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-600 hover:text-white rounded-xl border border-indigo-200/50 hover:border-indigo-600 font-bold transition-all text-[10px] flex items-center gap-1"
                                   >
                                     <PhoneCall className="w-3 h-3" />
                                     IVR Call
+                                  </button>
+                                  <button
+                                    onClick={() => setSelectedWaReminder(r)}
+                                    className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white rounded-xl border border-emerald-200/50 hover:border-emerald-600 font-bold transition-all text-[10px] flex items-center gap-1"
+                                  >
+                                    <MessageSquare className="w-3 h-3" />
+                                    WhatsApp
                                   </button>
                                   <button
                                     onClick={() => {
@@ -1932,7 +2055,7 @@ const SaleBike: React.FC = () => {
                         </tr>
 
                         {isExpanded && group.otherReminders.map(otherR => {
-                          const otherIsOverdue = otherR.status === 'pending' && todayStr > otherR.scheduledDate;
+                          const otherIsOverdue = otherR.status === 'overdue' || (otherR.status === 'pending' && todayStr > otherR.scheduledDate);
 
                           return (
                             <tr key={otherR.id} className="bg-slate-50/40 hover:bg-slate-100/55 transition-colors">
@@ -1960,6 +2083,46 @@ const SaleBike: React.FC = () => {
                                   <span className="px-2 py-0.5 bg-amber-50 text-amber-700 rounded-md font-bold text-[9px] border border-amber-250">Pending</span>
                                 )}
                               </td>
+                              <td className="p-3">
+                                {(otherR.ivrCallCount || 0) > 0 ? (
+                                  <button 
+                                    onClick={() => setSelectedIvrReminder(otherR)}
+                                    className="px-2 py-0.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-md font-bold text-[9px] border border-indigo-200 inline-flex items-center gap-1 transition-all"
+                                    title="Click to view IVR Call History"
+                                  >
+                                    <PhoneCall className="w-2.5 h-2.5" />
+                                    Called ({otherR.ivrCallCount})
+                                  </button>
+                                ) : (
+                                  <button 
+                                    onClick={() => setSelectedIvrReminder(otherR)}
+                                    className="text-[10px] text-slate-400 hover:text-indigo-600 font-medium hover:underline flex items-center gap-1"
+                                    title="Click to view IVR Call History"
+                                  >
+                                    Not Called
+                                  </button>
+                                )}
+                              </td>
+                              <td className="p-3">
+                                {(otherR.waSentCount || 0) > 0 ? (
+                                  <button 
+                                    onClick={() => setSelectedWaReminder(otherR)}
+                                    className="px-2 py-0.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-md font-bold text-[9px] border border-emerald-200 inline-flex items-center gap-1 transition-all"
+                                    title="Click to view WhatsApp Alert History"
+                                  >
+                                    <MessageSquare className="w-2.5 h-2.5" />
+                                    Sent ({otherR.waSentCount})
+                                  </button>
+                                ) : (
+                                  <button 
+                                    onClick={() => setSelectedWaReminder(otherR)}
+                                    className="text-[10px] text-slate-400 hover:text-emerald-600 font-medium hover:underline flex items-center gap-1"
+                                    title="Click to view WhatsApp Alert History"
+                                  >
+                                    Not Sent
+                                  </button>
+                                )}
+                              </td>
                               <td className="p-3 font-mono text-slate-600">
                                 {otherR.actualVisitDate || '-'}
                               </td>
@@ -1968,11 +2131,18 @@ const SaleBike: React.FC = () => {
                                   {otherR.status === 'pending' && (
                                     <>
                                       <button
-                                        onClick={() => triggerIvrCall(otherR)}
+                                        onClick={() => setSelectedIvrReminder(otherR)}
                                         className="px-2.5 py-1.5 bg-indigo-50 hover:bg-indigo-600 text-indigo-600 hover:text-white rounded-xl border border-indigo-200/50 hover:border-indigo-600 font-bold transition-all text-[10px] flex items-center gap-1"
                                       >
                                         <PhoneCall className="w-3 h-3" />
                                         IVR Call
+                                      </button>
+                                      <button
+                                        onClick={() => setSelectedWaReminder(otherR)}
+                                        className="px-2.5 py-1.5 bg-emerald-50 hover:bg-emerald-600 text-emerald-600 hover:text-white rounded-xl border border-emerald-200/50 hover:border-emerald-600 font-bold transition-all text-[10px] flex items-center gap-1"
+                                      >
+                                        <MessageSquare className="w-3 h-3" />
+                                        WhatsApp
                                       </button>
                                       <button
                                         onClick={() => {
@@ -2873,6 +3043,210 @@ const SaleBike: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* IVR History & Dispatch Modal */}
+      {selectedIvrReminder && (() => {
+        const logs: IvrLogEntry[] = Array.isArray(selectedIvrReminder.ivrLogs)
+          ? selectedIvrReminder.ivrLogs
+          : (typeof selectedIvrReminder.ivrLogs === 'string' && selectedIvrReminder.ivrLogs ? JSON.parse(selectedIvrReminder.ivrLogs) : []);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-3xl border border-slate-100 p-6 max-w-lg w-full shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-indigo-50 text-indigo-600 rounded-2xl">
+                    <PhoneCall className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900">IVR Call History</h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Service #{selectedIvrReminder.serviceNo} • {getCustomerDetails(selectedIvrReminder.customerId)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedIvrReminder(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Log Entries */}
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {logs.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <PhoneCall className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <p className="text-slate-700 font-extrabold text-xs">No IVR Calls Logged Yet</p>
+                    <p className="text-[11px] text-slate-400 mt-1">Click "Make IVR Call Now" below to dispatch an automated voice call.</p>
+                  </div>
+                ) : (
+                  logs.map((log, idx) => (
+                    <div key={idx} className="p-3 bg-slate-50/70 hover:bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-xl ${log.status === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                          <PhoneCall className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-800">
+                              {new Date(log.timestamp).toLocaleString()}
+                            </span>
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase ${log.type === 'auto' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {log.type === 'auto' ? 'Auto Alert' : 'Manual'}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-0.5">{log.message || (log.status === 'success' ? 'Call initiated successfully' : 'Failed')}</p>
+                        </div>
+                      </div>
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${log.status === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                        {log.status === 'success' ? 'Success' : 'Failed'}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Bottom Call Action Bar */}
+              <div className="border-t border-slate-100 pt-4 flex items-center justify-between gap-3">
+                <div className="text-xs text-slate-500 font-medium">
+                  Total Calls: <strong className="text-slate-800 font-extrabold">{selectedIvrReminder.ivrCallCount || 0}</strong>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleSendWhatsAppAlert(selectedIvrReminder)}
+                    className="px-3.5 py-2.5 bg-emerald-50 hover:bg-emerald-600 text-emerald-700 hover:text-white border border-emerald-200 hover:border-emerald-600 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    WhatsApp Alert
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isCallingIvr}
+                    onClick={async () => {
+                      if (!selectedIvrReminder) return;
+                      setIsCallingIvr(true);
+                      try {
+                        const cust = customers.find(c => c.id === selectedIvrReminder.customerId);
+                        const bike = bikes.find(b => b.id === selectedIvrReminder.bikeId);
+                        await executeIvrCall(selectedIvrReminder, cust, bike, false, updateReminder, 'manual');
+                      } finally {
+                        setIsCallingIvr(false);
+                      }
+                    }}
+                    className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-xs flex items-center gap-2 shadow-sm transition-all disabled:opacity-50"
+                  >
+                    <PhoneCall className="w-4 h-4" />
+                    {isCallingIvr ? 'Calling...' : 'Make IVR Call Now'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* WhatsApp History & Dispatch Modal */}
+      {selectedWaReminder && (() => {
+        const logs: WaLogEntry[] = Array.isArray(selectedWaReminder.waLogs)
+          ? selectedWaReminder.waLogs
+          : (typeof selectedWaReminder.waLogs === 'string' && selectedWaReminder.waLogs ? JSON.parse(selectedWaReminder.waLogs) : []);
+
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+            <div className="bg-white rounded-3xl border border-slate-100 p-6 max-w-lg w-full shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
+              <div className="flex justify-between items-center border-b border-slate-100 pb-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2.5 bg-emerald-50 text-emerald-600 rounded-2xl">
+                    <MessageSquare className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-base font-extrabold text-slate-900">WhatsApp Alert History</h3>
+                    <p className="text-xs text-slate-500 font-medium">
+                      Service #{selectedWaReminder.serviceNo} • {getCustomerDetails(selectedWaReminder.customerId)}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedWaReminder(null)}
+                  className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-all"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Log Entries */}
+              <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                {logs.length === 0 ? (
+                  <div className="p-8 text-center bg-slate-50 rounded-2xl border border-dashed border-slate-200">
+                    <MessageSquare className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                    <p className="text-slate-700 font-extrabold text-xs">No WhatsApp Alerts Sent Yet</p>
+                    <p className="text-[11px] text-slate-400 mt-1">Click "Send WhatsApp Alert Now" below to dispatch a message.</p>
+                  </div>
+                ) : (
+                  logs.map((log, idx) => (
+                    <div key={idx} className="p-3 bg-slate-50/70 hover:bg-slate-50 rounded-2xl border border-slate-100 flex items-center justify-between transition-colors">
+                      <div className="flex items-center gap-3">
+                        <div className={`p-2 rounded-xl ${log.status === 'success' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'}`}>
+                          <MessageSquare className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-slate-800">
+                              {new Date(log.timestamp).toLocaleString()}
+                            </span>
+                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-extrabold uppercase ${log.type === 'auto' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'}`}>
+                              {log.type === 'auto' ? 'Auto Alert' : 'Manual'}
+                            </span>
+                          </div>
+                          <p className="text-[10px] text-slate-500 mt-0.5">{log.message || (log.status === 'success' ? 'WhatsApp alert sent' : 'Failed')}</p>
+                        </div>
+                      </div>
+                      <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded-md ${log.status === 'success' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'}`}>
+                        {log.status === 'success' ? 'Success' : 'Failed'}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Bottom Action Bar */}
+              <div className="border-t border-slate-100 pt-4 flex items-center justify-between gap-3">
+                <div className="text-xs text-slate-500 font-medium">
+                  Total Sent: <strong className="text-slate-800 font-extrabold">{selectedWaReminder.waSentCount || 0}</strong>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const rem = selectedWaReminder;
+                      setSelectedWaReminder(null);
+                      setSelectedIvrReminder(rem);
+                    }}
+                    className="px-3 py-2 bg-indigo-50 hover:bg-indigo-600 text-indigo-700 hover:text-white border border-indigo-200 hover:border-indigo-600 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm"
+                  >
+                    <PhoneCall className="w-3.5 h-3.5" />
+                    IVR Calls
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!selectedWaReminder) return;
+                      await handleSendWhatsAppAlert(selectedWaReminder, 'manual');
+                    }}
+                    className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-2 shadow-sm transition-all"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    Send WhatsApp Alert Now
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

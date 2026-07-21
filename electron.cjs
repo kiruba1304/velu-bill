@@ -434,10 +434,23 @@ async function initDb() {
       status VARCHAR(50) DEFAULT 'pending',
       notes TEXT,
       branchId INT NULL DEFAULT 1,
+      ivrCallCount INT DEFAULT 0,
+      lastIvrCallDate VARCHAR(255) NULL,
+      ivrLogs TEXT NULL,
+      waSentCount INT DEFAULT 0,
+      lastWaSentDate VARCHAR(255) NULL,
+      waLogs TEXT NULL,
       createdAt VARCHAR(255),
       updatedAt VARCHAR(255)
     )
   `);
+
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN ivrCallCount INT DEFAULT 0`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN lastIvrCallDate VARCHAR(255) NULL`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN ivrLogs TEXT NULL`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN waSentCount INT DEFAULT 0`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN lastWaSentDate VARCHAR(255) NULL`); } catch (e) {}
+  try { await pool.query(`ALTER TABLE BikeServiceReminders ADD COLUMN waLogs TEXT NULL`); } catch (e) {}
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS MonthlyAccounts (
@@ -2528,7 +2541,11 @@ async function _executeDbCallInner(method, args) {
       const [rows] = (branchId === 0)
         ? await pool.query('SELECT * FROM BikeServiceReminders ORDER BY id DESC')
         : await pool.query('SELECT * FROM BikeServiceReminders WHERE branchId = ? ORDER BY id DESC', [branchId || 1]);
-      return rows;
+      return rows.map(r => ({
+        ...r,
+        ivrLogs: parseJsonField(r.ivrLogs),
+        waLogs: parseJsonField(r.waLogs)
+      }));
     }
     case 'createBikeServiceReminder': {
       const [reminderData, branchId] = args;
@@ -2665,6 +2682,23 @@ function getWaSessionsDir() {
   return path.join(app.getPath('userData'), 'wa_session');
 }
 
+let waInitTimeoutTimer = null;
+
+function clearStaleWaLocks() {
+  try {
+    const sessionDir = path.join(getWaSessionsDir(), 'session');
+    const lockFiles = ['SingletonLock', 'SingletonCookie', 'SingletonSocket', 'DevToolsActivePort'];
+    lockFiles.forEach(file => {
+      const filePath = path.join(sessionDir, file);
+      if (fs.existsSync(filePath)) {
+        try { fs.unlinkSync(filePath); } catch (e) {}
+      }
+    });
+  } catch (e) {
+    console.error('Error clearing stale WA locks:', e);
+  }
+}
+
 function initWhatsAppClient() {
   if (waClient) {
     if (waStatus === 'connected' && mainWindow && mainWindow.webContents) {
@@ -2677,6 +2711,28 @@ function initWhatsAppClient() {
   if (mainWindow && mainWindow.webContents) {
     mainWindow.webContents.send('whatsapp-status', { status: waStatus });
   }
+
+  clearStaleWaLocks();
+
+  if (waInitTimeoutTimer) {
+    clearTimeout(waInitTimeoutTimer);
+    waInitTimeoutTimer = null;
+  }
+
+  // Safety guard: if initialization doesn't finish within 25 seconds, reset state to disconnected
+  waInitTimeoutTimer = setTimeout(() => {
+    if (waStatus === 'loading') {
+      console.warn('[WhatsApp] Initialization timed out after 25s, resetting client...');
+      if (waClient) {
+        try { waClient.destroy(); } catch (e) {}
+      }
+      waClient = null;
+      waStatus = 'disconnected';
+      if (mainWindow && mainWindow.webContents) {
+        mainWindow.webContents.send('whatsapp-status', { status: 'disconnected', error: 'Initialization timed out' });
+      }
+    }
+  }, 25000);
 
   try {
     waClient = new WAClient({
@@ -2696,6 +2752,7 @@ function initWhatsAppClient() {
     });
 
     waClient.on('qr', (qr) => {
+      if (waInitTimeoutTimer) { clearTimeout(waInitTimeoutTimer); waInitTimeoutTimer = null; }
       waStatus = 'qr_ready';
       qrcode.toDataURL(qr, (err, url) => {
         if (!err) {
@@ -2709,6 +2766,7 @@ function initWhatsAppClient() {
     });
 
     waClient.on('ready', () => {
+      if (waInitTimeoutTimer) { clearTimeout(waInitTimeoutTimer); waInitTimeoutTimer = null; }
       waStatus = 'connected';
       waQrCodeDataUrl = '';
       try {
@@ -2727,6 +2785,7 @@ function initWhatsAppClient() {
     });
 
     waClient.on('auth_failure', (msg) => {
+      if (waInitTimeoutTimer) { clearTimeout(waInitTimeoutTimer); waInitTimeoutTimer = null; }
       console.error('WhatsApp Auth Failure:', msg);
       waStatus = 'disconnected';
       waClient = null;
@@ -2736,6 +2795,7 @@ function initWhatsAppClient() {
     });
 
     waClient.on('disconnected', (reason) => {
+      if (waInitTimeoutTimer) { clearTimeout(waInitTimeoutTimer); waInitTimeoutTimer = null; }
       console.log('WhatsApp Disconnected:', reason);
       waStatus = 'disconnected';
       waClient = null;
@@ -2746,6 +2806,7 @@ function initWhatsAppClient() {
     });
 
     waClient.initialize().catch((err) => {
+      if (waInitTimeoutTimer) { clearTimeout(waInitTimeoutTimer); waInitTimeoutTimer = null; }
       console.error('Failed to initialize WhatsApp Client:', err);
       waStatus = 'disconnected';
       waClient = null;
@@ -2754,6 +2815,7 @@ function initWhatsAppClient() {
       }
     });
   } catch (err) {
+    if (waInitTimeoutTimer) { clearTimeout(waInitTimeoutTimer); waInitTimeoutTimer = null; }
     console.error('WhatsApp Client init exception:', err);
     waStatus = 'disconnected';
     waClient = null;
@@ -2860,6 +2922,19 @@ app.whenReady().then(async () => {
   // Check for updates in production (packaged) environments
   if (!isDev) {
     autoUpdater.checkForUpdatesAndNotify();
+  }
+});
+
+app.on('before-quit', async () => {
+  if (waInitTimeoutTimer) {
+    clearTimeout(waInitTimeoutTimer);
+    waInitTimeoutTimer = null;
+  }
+  if (waClient) {
+    try {
+      await waClient.destroy();
+    } catch (e) {}
+    waClient = null;
   }
 });
 

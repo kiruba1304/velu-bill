@@ -21,17 +21,19 @@ import {
   QrCode,
   Key,
   Lock,
-  ArrowLeft
+  ArrowLeft,
+  FileSpreadsheet
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import { Html5Qrcode } from 'html5-qrcode';
 import { useDatabase } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
 import { AttendanceRecord, AttendanceRules, Holiday, LeavePermissionRequest } from '../types';
+import { exportAttendanceExcel } from '../utils/exportAttendanceExcel';
 
 export default function Attendance() {
   const db = useDatabase();
-  const { currentUser, isSuperAdmin, isAdmin, isSubAdmin, activeBranchId, allowedPages } = useAuth();
+  const { currentUser, isSuperAdmin, isAdmin, isSubAdmin, activeBranchId, allowedPages, branches } = useAuth();
   
   // Decide active tab based on role
   const isManager = isSuperAdmin || isAdmin || isSubAdmin;
@@ -908,6 +910,38 @@ export default function Attendance() {
     return `${String(displayH).padStart(2, '0')}:${mStr} ${ampm}`;
   };
 
+  // Export Monthly Grid to Professional Excel (.xlsx)
+  const [exportingExcel, setExportingExcel] = useState(false);
+
+  const handleExportExcel = async () => {
+    if (allUsers.length === 0) return;
+    try {
+      setExportingExcel(true);
+      const activeBranch = (branches || []).find(b => b.id === activeBranchId);
+      const branchInfo = {
+        name: activeBranchId === 0 ? 'All Branches' : (activeBranch?.name || 'Main Branch'),
+        id: activeBranchId,
+        address: activeBranch?.address || '',
+        phone: activeBranch?.phone || ''
+      };
+
+      await exportAttendanceExcel(
+        allUsers,
+        monthlyRecords,
+        selectedMonth,
+        selectedYear,
+        branchInfo,
+        holidays,
+        searchTerm
+      );
+    } catch (err: any) {
+      console.error('Failed to export Excel report:', err);
+      alert('Failed to export Excel report: ' + (err.message || String(err)));
+    } finally {
+      setExportingExcel(false);
+    }
+  };
+
   // Export Monthly Grid to CSV
   const handleExportCSV = () => {
     if (allUsers.length === 0) return;
@@ -1546,13 +1580,25 @@ export default function Attendance() {
                 </div>
               </div>
 
-              {/* CSV Export Button */}
-              <button
-                onClick={handleExportCSV}
-                className="btn-primary flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl"
-              >
-                <Download className="w-4 h-4" /> Export Report (CSV)
-              </button>
+              {/* Export Buttons */}
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExportExcel}
+                  disabled={exportingExcel}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white flex items-center gap-2 px-4 py-2 text-sm font-semibold rounded-xl transition-all shadow-sm shadow-emerald-200 disabled:opacity-50"
+                  title="Export Professional Excel Report (.xlsx)"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  {exportingExcel ? 'Exporting...' : 'Export Excel Report'}
+                </button>
+                <button
+                  onClick={handleExportCSV}
+                  className="bg-slate-100 hover:bg-slate-200 text-slate-700 flex items-center gap-2 px-3 py-2 text-sm font-semibold rounded-xl border border-slate-200 transition-all"
+                  title="Export CSV File"
+                >
+                  <Download className="w-4 h-4" /> CSV
+                </button>
+              </div>
             </div>
 
             {/* Matrix Sheet Grid rendering */}

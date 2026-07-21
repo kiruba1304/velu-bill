@@ -224,3 +224,14 @@ button:focus-visible {
   pointer-events: none;
   z-index: 10;
 }
+
+/* Hide scrollbar for Chrome, Safari, Edge, Opera and Firefox */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}

@@ -24,12 +24,16 @@ import { useAuth, AuthProvider } from './hooks/useAuth';
 import { useECommerceIntegration } from './hooks/useECommerceIntegration';
 import Login from './pages/Login';
 import Attendance from './pages/Attendance';
+import loginBg from '../assets/Login page image.png';
 import { Database, FileText, FileCode, FolderDown, Menu, Download, RefreshCw, AlertCircle, CheckCircle } from 'lucide-react';
+
+import { useAutoIvrScheduler } from './hooks/useAutoIvrScheduler';
 
 type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
 
 function AppContent() {
   const { currentUser, allowedPages } = useAuth();
+  useAutoIvrScheduler();
   const [currentPage, setCurrentPage] = useState<Page>(() => {
     try {
       const saved = localStorage.getItem('app_current_page');
@@ -38,6 +42,71 @@ function AppContent() {
       return 'dashboard';
     }
   });
+
+  // Screen Saver State & Logic
+  const [isScreensaverActive, setIsScreensaverActive] = useState(false);
+
+  useEffect(() => {
+    let timer: NodeJS.Timeout | null = null;
+
+    const getTimeoutMs = () => {
+      try {
+        const saved = localStorage.getItem('screensaver_timeout');
+        if (saved !== null) {
+          return parseInt(saved, 10) * 1000;
+        }
+        localStorage.setItem('screensaver_timeout', '300');
+        return 300 * 1000;
+      } catch {
+        return 300 * 1000;
+      }
+    };
+
+    const resetTimer = () => {
+      if (timer) clearTimeout(timer);
+      const timeoutMs = getTimeoutMs();
+      if (timeoutMs > 0) {
+        timer = setTimeout(() => {
+          setIsScreensaverActive(true);
+        }, timeoutMs);
+      }
+    };
+
+    const handleUserActivity = () => {
+      setIsScreensaverActive(false);
+      resetTimer();
+    };
+
+    const handleSettingChange = () => {
+      setIsScreensaverActive(false);
+      resetTimer();
+    };
+
+    const handlePreviewTrigger = () => {
+      setIsScreensaverActive(true);
+    };
+
+    window.addEventListener('mousemove', handleUserActivity);
+    window.addEventListener('keydown', handleUserActivity);
+    window.addEventListener('mousedown', handleUserActivity);
+    window.addEventListener('touchstart', handleUserActivity);
+    window.addEventListener('scroll', handleUserActivity);
+    window.addEventListener('screensaver-setting-changed', handleSettingChange);
+    window.addEventListener('trigger-screensaver-preview', handlePreviewTrigger);
+
+    resetTimer();
+
+    return () => {
+      if (timer) clearTimeout(timer);
+      window.removeEventListener('mousemove', handleUserActivity);
+      window.removeEventListener('keydown', handleUserActivity);
+      window.removeEventListener('mousedown', handleUserActivity);
+      window.removeEventListener('touchstart', handleUserActivity);
+      window.removeEventListener('scroll', handleUserActivity);
+      window.removeEventListener('screensaver-setting-changed', handleSettingChange);
+      window.removeEventListener('trigger-screensaver-preview', handlePreviewTrigger);
+    };
+  }, []);
 
   useEffect(() => {
     try {
@@ -272,7 +341,27 @@ function AppContent() {
   }, [currentUser, allowedPages, currentPage]);
 
   if (!currentUser) {
-    return <Login onLoginSuccess={() => {}} />;
+    return (
+      <>
+        {isScreensaverActive && (
+          <div
+            onClick={() => setIsScreensaverActive(false)}
+            className="fixed inset-0 z-[999999] bg-black flex items-center justify-center cursor-pointer overflow-hidden animate-in fade-in duration-300"
+          >
+            <img
+              src={loginBg}
+              alt="Screen Saver"
+              className="w-full h-full object-cover select-none pointer-events-none"
+            />
+            <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-md px-6 py-2.5 rounded-full text-white/90 text-xs font-semibold tracking-wider uppercase border border-white/20 shadow-2xl pointer-events-none flex items-center gap-2">
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+              Move mouse or press any key to resume
+            </div>
+          </div>
+        )}
+        <Login onLoginSuccess={() => {}} />
+      </>
+    );
   }
 
   const renderPage = () => {
@@ -326,7 +415,26 @@ function AppContent() {
   };
 
   return (
-    <div className="app-root flex flex-col md:flex-row h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-slate-100 to-blue-50 text-slate-900">
+    <>
+      {/* Fullscreen Image Screensaver */}
+      {isScreensaverActive && (
+        <div
+          onClick={() => setIsScreensaverActive(false)}
+          className="fixed inset-0 z-[999999] bg-black flex items-center justify-center cursor-pointer overflow-hidden animate-in fade-in duration-300"
+        >
+          <img
+            src={loginBg}
+            alt="Screen Saver"
+            className="w-full h-full object-cover select-none pointer-events-none"
+          />
+          <div className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-black/60 backdrop-blur-md px-6 py-2.5 rounded-full text-white/90 text-xs font-semibold tracking-wider uppercase border border-white/20 shadow-2xl pointer-events-none flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+            Move mouse or press any key to resume
+          </div>
+        </div>
+      )}
+
+      <div className="app-root flex flex-col md:flex-row h-screen overflow-hidden bg-gradient-to-br from-slate-50 via-slate-100 to-blue-50 text-slate-900">
       {showSplash && (
         <div 
           className={`fixed inset-0 z-[10000] flex flex-col items-center justify-center bg-slate-900 transition-opacity duration-500 ${
@@ -603,6 +711,7 @@ function AppContent() {
         </div>
       )}
     </div>
+    </>
   );
 }
 

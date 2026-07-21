@@ -311,7 +311,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
                 <div>
                   <p className="text-sm font-medium text-slate-500">{stat.title}</p>
                   <p className="mt-1 text-3xl font-bold tracking-tight text-slate-900">{stat.value}</p>
-                  <p className={`mt-1 text-sm ${stat.color}`}>{stat.change} from yesterday</p>
+                  <p className={`mt-1 text-sm ${stat.color}`}>{stat.change}</p>
                 </div>
                 <div className={`rounded-2xl p-3 ${stat.bgColor}`}>
                   <Icon className={`w-6 h-6 ${stat.color}`} />

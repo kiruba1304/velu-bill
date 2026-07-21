@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../hooks/useAuth';
 import {
   Home,
@@ -19,7 +19,9 @@ import {
   CalendarCheck,
   Calculator,
   RefreshCw,
-  X
+  X,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 
 type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
@@ -54,6 +56,16 @@ const menuItems = [
 const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, isOpen, onClose }) => {
   const { currentUser, logout, allowedPages, branches, activeBranchId, setActiveBranchId, isSuperAdmin, isAdmin } = useAuth();
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const navRef = useRef<HTMLDivElement>(null);
+  const [canScrollUp, setCanScrollUp] = useState(false);
+  const [canScrollDown, setCanScrollDown] = useState(false);
+
+  const checkScrollPosition = () => {
+    if (!navRef.current) return;
+    const { scrollTop, scrollHeight, clientHeight } = navRef.current;
+    setCanScrollUp(scrollTop > 15);
+    setCanScrollDown(scrollHeight - scrollTop - clientHeight > 15);
+  };
 
   useEffect(() => {
     const handleFullscreen = (e: Event) => {
@@ -62,6 +74,26 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, isOpen, onCl
     window.addEventListener('attendance-fullscreen', handleFullscreen);
     return () => window.removeEventListener('attendance-fullscreen', handleFullscreen);
   }, []);
+
+  useEffect(() => {
+    checkScrollPosition();
+    const timer = setTimeout(checkScrollPosition, 300);
+    window.addEventListener('resize', checkScrollPosition);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('resize', checkScrollPosition);
+    };
+  }, [allowedPages]);
+
+  const handleScrollUpClick = () => {
+    if (!navRef.current) return;
+    navRef.current.scrollBy({ top: -160, behavior: 'smooth' });
+  };
+
+  const handleScrollDownClick = () => {
+    if (!navRef.current) return;
+    navRef.current.scrollBy({ top: 160, behavior: 'smooth' });
+  };
 
   if (isFullscreen) return null;
 
@@ -84,7 +116,7 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, isOpen, onCl
   };
 
   return (
-    <div className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-white/50 bg-slate-950 text-white shadow-2xl transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+    <div className={`fixed inset-y-0 left-0 z-50 flex w-72 flex-col border-r border-white/50 bg-slate-950 text-white shadow-2xl transition-transform duration-300 ease-in-out md:relative md:translate-x-0 ${isOpen ? 'translate-x-0' : '-translate-x-full'} no-scrollbar`}>
       <div className="absolute inset-x-0 top-0 h-44 bg-gradient-to-b from-primary-500/30 to-transparent" />
       <div className="relative p-6 pb-4">
         {/* Close Button on Mobile */}
@@ -133,26 +165,56 @@ const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, isOpen, onCl
         )}
       </div>
 
-      <nav className="relative mt-2 flex-1 px-3 pb-4 overflow-y-auto">
-        {filteredMenuItems.map((item) => {
-          const Icon = item.icon;
-          const isActive = currentPage === item.id;
+      <div className="relative flex-1 flex flex-col min-h-0">
+        {/* Scroll Up Indicator Arrow */}
+        {canScrollUp && (
+          <button
+            type="button"
+            onClick={handleScrollUpClick}
+            className="absolute top-1 left-1/2 -translate-x-1/2 flex items-center justify-center w-7 h-7 rounded-full bg-slate-900/90 border border-white/20 text-slate-300 shadow-xl hover:bg-slate-800 hover:text-white transition-all animate-bounce z-20"
+            title="Scroll up for previous menu items"
+          >
+            <ChevronUp className="w-4 h-4" />
+          </button>
+        )}
 
-          return (
-            <button
-              key={item.id}
-              onClick={() => onNavigate(item.id as Page)}
-              className={`mb-1 flex w-full items-center rounded-2xl px-4 py-3 text-left transition-all duration-200 ${isActive
-                  ? 'bg-white/14 text-white shadow-lg shadow-black/10 ring-1 ring-white/10'
-                  : 'text-slate-300 hover:bg-white/8 hover:text-white'
-                }`}
-            >
-              <Icon className={`mr-3 h-5 w-5 ${isActive ? 'text-primary-200' : 'text-slate-400'}`} />
-              <span className="font-medium">{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
+        <nav
+          ref={navRef}
+          onScroll={checkScrollPosition}
+          className="relative mt-2 flex-1 px-3 pb-4 overflow-y-auto no-scrollbar"
+        >
+          {filteredMenuItems.map((item) => {
+            const Icon = item.icon;
+            const isActive = currentPage === item.id;
+
+            return (
+              <button
+                key={item.id}
+                onClick={() => onNavigate(item.id as Page)}
+                className={`mb-1 flex w-full items-center rounded-2xl px-4 py-3 text-left transition-all duration-200 ${isActive
+                    ? 'bg-white/14 text-white shadow-lg shadow-black/10 ring-1 ring-white/10'
+                    : 'text-slate-300 hover:bg-white/8 hover:text-white'
+                  }`}
+              >
+                <Icon className={`mr-3 h-5 w-5 ${isActive ? 'text-primary-200' : 'text-slate-400'}`} />
+                <span className="font-medium">{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+
+        {/* Scroll Down Indicator Arrow */}
+        {canScrollDown && (
+          <button
+            type="button"
+            onClick={handleScrollDownClick}
+            className="absolute bottom-2 left-1/2 -translate-x-1/2 flex items-center justify-center w-7 h-7 rounded-full bg-slate-900/90 border border-white/20 text-slate-300 shadow-xl hover:bg-slate-800 hover:text-white transition-all animate-bounce z-20"
+            title="Scroll down for more menu items"
+          >
+            <ChevronDown className="w-4 h-4" />
+          </button>
+        )}
+      </div>
 
       <div className="border-t border-white/10 p-4 space-y-3 bg-slate-950/50">
         {allowedPages.includes('settings') && (
