@@ -24,12 +24,13 @@ import { useAuth, AuthProvider } from './hooks/useAuth';
 import { useECommerceIntegration } from './hooks/useECommerceIntegration';
 import Login from './pages/Login';
 import Attendance from './pages/Attendance';
+import Ads from './pages/Ads';
 import loginBg from '../assets/Login page image.png';
 import { Database, FileText, FileCode, FolderDown, Menu, Download, RefreshCw, AlertCircle, CheckCircle } from 'lucide-react';
 
 import { useAutoIvrScheduler } from './hooks/useAutoIvrScheduler';
 
-type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
+type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance' | 'ads';
 
 function AppContent() {
   const { currentUser, allowedPages } = useAuth();
@@ -409,6 +410,8 @@ function AppContent() {
         return <Settings />;
       case 'attendance':
         return <Attendance />;
+      case 'ads':
+        return <Ads />;
       default:
         return <Dashboard onNavigate={setCurrentPage} />;
     }

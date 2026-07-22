@@ -2904,6 +2904,32 @@ ipcMain.handle('send-whatsapp-auto', async (event, payload) => {
   return true;
 });
 
+ipcMain.handle('send-whatsapp-ads', async (event, payload) => {
+  const { phone, text, imageBase64, imageMimeType, imageFileName } = payload || {};
+  if (!waClient || waStatus !== 'connected') {
+    throw new Error('WhatsApp is not paired/connected. Please pair WhatsApp in Settings -> WhatsApp Automation.');
+  }
+  if (!phone) {
+    throw new Error('Phone number is required for WhatsApp campaign.');
+  }
+
+  const cleanPhone = String(phone).replace(/\D/g, '');
+  const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+  const chatId = `${formattedPhone}@c.us`;
+
+  if (imageBase64 && imageMimeType) {
+    const base64Data = imageBase64.includes(';base64,') 
+      ? imageBase64.split(';base64,')[1] 
+      : imageBase64;
+    const media = new WAMessageMedia(imageMimeType, base64Data, imageFileName || 'image.jpg');
+    await waClient.sendMessage(chatId, media, { caption: text });
+  } else {
+    await waClient.sendMessage(chatId, text);
+  }
+  return true;
+});
+
+
 app.whenReady().then(async () => {
   try {
     await initDb();

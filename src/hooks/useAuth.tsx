@@ -39,6 +39,7 @@ const ALL_PAGES = [
   'settings',
   'sale_bike',
   'attendance',
+  'ads',
   'attendance_modify'
 ];
 

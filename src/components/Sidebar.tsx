@@ -21,10 +21,11 @@ import {
   RefreshCw,
   X,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Megaphone
 } from 'lucide-react';
 
-type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance';
+type Page = 'dashboard' | 'accounts' | 'services' | 'service_bill' | 'products' | 'categories' | 'barcodes' | 'billing' | 'customers' | 'inventory' | 'parties' | 'reports' | 'templates' | 'settings' | 'online_orders' | 'sale_bike' | 'attendance' | 'ads';
 
 interface SidebarProps {
   currentPage: string;
@@ -50,6 +51,7 @@ const menuItems = [
   { id: 'templates', label: 'INV Template', icon: Layout },
   { id: 'online_orders', label: 'Online Orders', icon: Package },
   { id: 'attendance', label: 'Attendance', icon: CalendarCheck },
+  { id: 'ads', label: 'ADS', icon: Megaphone },
 ];
 
 

@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   initWhatsApp: () => ipcRenderer.invoke('init-whatsapp'),
   disconnectWhatsApp: () => ipcRenderer.invoke('disconnect-whatsapp'),
   sendWhatsAppAuto: (phone, text, billNumber, customerName) => ipcRenderer.invoke('send-whatsapp-auto', { phone, text, billNumber, customerName }),
+  sendWhatsAppAds: (payload) => ipcRenderer.invoke('send-whatsapp-ads', payload),
   onWhatsAppStatus: (callback) => ipcRenderer.on('whatsapp-status', (event, data) => callback(data)),
   onWhatsAppQr: (callback) => ipcRenderer.on('whatsapp-qr', (event, data) => callback(data))
 });
