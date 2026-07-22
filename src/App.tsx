@@ -137,7 +137,7 @@ function AppContent() {
   const db = useDatabase();
   useECommerceIntegration();
   const [isClosing, setIsClosing] = useState(false);
-  const [closingCountdown, setClosingCountdown] = useState(15);
+  const [closingCountdown, setClosingCountdown] = useState(5);
 
   const [showSplash, setShowSplash] = useState(true);
   const [splashFade, setSplashFade] = useState(false);
@@ -254,9 +254,9 @@ function AppContent() {
 
     api.onAppClose(async () => {
       setIsClosing(true);
-      setClosingCountdown(15);
+      setClosingCountdown(5);
 
-      let timeLeft = 15;
+      let timeLeft = 5;
       const interval = setInterval(async () => {
         timeLeft--;
         setClosingCountdown(timeLeft);

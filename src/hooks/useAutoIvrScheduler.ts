@@ -24,7 +24,6 @@ export const useAutoIvrScheduler = () => {
 
         const rawSettings = localStorage.getItem('app_settings');
         const settings = rawSettings ? JSON.parse(rawSettings) : {};
-        const storeName = settings.storeName || 'SAM Motors';
 
         // 1. Check & Dispatch Auto IVR Calls (if IVR API URL is configured by Super Admin)
         if (settings.ivrApiUrl) {
@@ -57,7 +56,7 @@ export const useAutoIvrScheduler = () => {
                   const bike = (bikes || []).find((b: any) => b.id === reminder.bikeId);
 
                   if (cust && cust.phone) {
-                    const messageText = generateServiceWhatsAppMessage(reminder, cust, bike, storeSettings.storeName, storeSettings.address, storeSettings.phone);
+                    const messageText = generateServiceWhatsAppMessage(reminder, cust, bike, settings.storeName, settings.address, settings.phone);
                     console.log(`[Auto WhatsApp] Sending automated alert to ${cust.name} (${cust.phone})`);
                     
                     try {
@@ -102,7 +101,7 @@ export const useAutoIvrScheduler = () => {
                   const bike = (bikes || []).find((b: any) => b.id === reminder.bikeId);
 
                   if (cust && cust.phone) {
-                    const messageText = generateOverdueWhatsAppMessage(reminder, cust, bike, storeSettings.storeName, storeSettings.address, storeSettings.phone);
+                    const messageText = generateOverdueWhatsAppMessage(reminder, cust, bike, settings.storeName, settings.address, settings.phone);
                     console.log(`[Auto WhatsApp] Sending automated OVERDUE alert to ${cust.name} (${cust.phone})`);
                     
                     try {

@@ -17,7 +17,7 @@ import {
   Trash2,
   Share2
 } from 'lucide-react';
-import { useBills, useProducts, useCustomers } from '../hooks/useDatabase';
+import { useBills, useProducts, useCustomers, useBikes } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
 import { getStoreSettings } from '../utils/getStoreSettings';
 import { exportToExcel } from '../utils/exportToExcel';
@@ -358,8 +358,67 @@ const Reports: React.FC = () => {
   const { bills, refreshBills, deleteBill } = useBills();
   const { products } = useProducts();
   const { customers } = useCustomers();
+  const { bikes } = useBikes(0);
   const { activeBranchId, branches } = useAuth();
   const [sharingBill, setSharingBill] = useState<Bill | null>(null);
+
+  // Helper to resolve product details for regular products vs showroom bikes (-888)
+  const resolveProductDetails = (productId: number, item: any, bill: Bill) => {
+    const p = products.find(pp => pp.id === productId);
+    let name = p?.name || item.product?.name || `Product #${productId}`;
+    let code = p?.productCode || item.product?.productCode || '';
+    let company = p?.company || item.product?.company || '';
+
+    if (productId === -888) {
+      const billDateStr = bill.createdAt ? new Date(bill.createdAt).toISOString().split('T')[0] : '';
+      const soldBike = (bikes || []).find(bike => 
+        bike.status === 'sold' && 
+        bike.soldToCustomerId === bill.customerId && 
+        (bike.saleDate === billDateStr || (bike.saleDate && bill.createdAt && new Date(bike.saleDate).toDateString() === new Date(bill.createdAt).toDateString()))
+      );
+      if (soldBike) {
+        name = `${soldBike.brand} ${soldBike.modelName} (Showroom Bike)`;
+        code = soldBike.chassisNumber;
+        company = `Chassis: ${soldBike.chassisNumber} | Engine: ${soldBike.engineNumber}`;
+      } else {
+        name = 'Showroom Bike Sale';
+        code = 'BIKE';
+      }
+    }
+
+    return { name, code, company };
+  };
+
+  const populateBillItems = (bill: Bill) => {
+    return {
+      ...bill,
+      items: (bill.items || []).map(item => {
+        let prod = products.find(p => p.id === item.productId) || item.product;
+        if (item.productId === -888 && !prod) {
+          const { name, code, company } = resolveProductDetails(item.productId, item, bill);
+          prod = {
+            id: -888,
+            name,
+            company,
+            productCode: code,
+            barcode: `BIKE_${code}`,
+            count: 1,
+            costPrice: 0,
+            sellingPrice: item.unitPrice,
+            discount: item.discount,
+            gst: item.gst,
+            finalPrice: item.totalPrice,
+            createdAt: bill.createdAt,
+            updatedAt: bill.createdAt
+          };
+        }
+        return {
+          ...item,
+          product: prod
+        };
+      })
+    };
+  };
 
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
@@ -486,15 +545,15 @@ const Reports: React.FC = () => {
         const cgst = itemGstAmt / 2;
         const sgst = itemGstAmt / 2;
 
-        const p = products.find(pp => pp.id === it.productId);
+        const { name: prodName, code: prodCode } = resolveProductDetails(it.productId, it, b);
         list.push({
           id: `${b.billNumber}-${it.id}`,
           billNumber: b.billNumber,
           createdAt: b.createdAt,
           branchName,
           customerName: b.customer?.name || 'Walk-in Customer',
-          productName: p?.name || it.product?.name || `Product #${it.productId}`,
-          productCode: p?.productCode || it.product?.productCode || '',
+          productName: prodName,
+          productCode: prodCode,
           gstRate: it.gst,
           taxableValue: adjustedBase,
           cgst,
@@ -530,7 +589,7 @@ const Reports: React.FC = () => {
     });
 
     return list;
-  }, [periodBills, products]);
+  }, [periodBills, products, bikes]);
 
   const filteredGstRecords = useMemo(() => {
     return gstRecords.filter(r => {
@@ -748,10 +807,11 @@ const Reports: React.FC = () => {
     filteredPeriodBills.forEach(b => {
       (b.items || []).forEach(it => {
         const p = products.find(pp => pp.id === it.productId);
+        const { name: prodName, company: prodCompany } = resolveProductDetails(it.productId, it, b);
         const rec = map.get(it.productId) || {
           productId: it.productId,
-          productName: p?.name || `#${it.productId}`,
-          company: p?.company || '',
+          productName: prodName,
+          company: prodCompany,
           quantitySold: 0,
           revenue: 0,
           profit: 0,
@@ -776,7 +836,7 @@ const Reports: React.FC = () => {
       });
     });
     return Array.from(map.values());
-  }, [filteredPeriodBills, products]);
+  }, [filteredPeriodBills, products, bikes]);
 
   const customerSales: CustomerSales[] = useMemo(() => {
     const map = new Map<number, CustomerSales>();
@@ -1113,8 +1173,8 @@ const Reports: React.FC = () => {
           rows.push([
             new Date(b.createdAt).toLocaleDateString(),
             b.billNumber,
-            p?.name || `#${it.productId}`,
-            p?.productCode || '',
+            resolveProductDetails(it.productId, it, b).name,
+            resolveProductDetails(it.productId, it, b).code,
             qty,
             unitCost.toFixed(2),
             unitSell.toFixed(2),
@@ -1196,13 +1256,7 @@ const Reports: React.FC = () => {
                       (window as any).Capacitor?.getPlatform() === 'android';
                       
     if (isAndroid) {
-      const populatedBill = {
-        ...bill,
-        items: (bill.items || []).map(item => ({
-          ...item,
-          product: products.find(p => p.id === item.productId) || item.product
-        }))
-      };
+      const populatedBill = populateBillItems(bill);
 
       const appSettingsRaw = localStorage.getItem('app_settings');
       const appSettings = appSettingsRaw ? JSON.parse(appSettingsRaw) : {};
@@ -1260,13 +1314,7 @@ const Reports: React.FC = () => {
       return;
     }
 
-    const populatedBill = {
-      ...bill,
-      items: (bill.items || []).map(item => ({
-        ...item,
-        product: products.find(p => p.id === item.productId) || item.product
-      }))
-    };
+    const populatedBill = populateBillItems(bill);
 
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -1320,13 +1368,7 @@ const Reports: React.FC = () => {
   };
 
   const handlePreviewBill = (bill: Bill) => {
-    const populatedBill = {
-      ...bill,
-      items: (bill.items || []).map(item => ({
-        ...item,
-        product: products.find(p => p.id === item.productId) || item.product
-      }))
-    };
+    const populatedBill = populateBillItems(bill);
 
     const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 
@@ -1369,13 +1411,7 @@ const Reports: React.FC = () => {
   };
 
   const handleShareBill = (bill: Bill) => {
-    const populatedBill = {
-      ...bill,
-      items: (bill.items || []).map(item => ({
-        ...item,
-        product: products.find(p => p.id === item.productId) || item.product
-      }))
-    };
+    const populatedBill = populateBillItems(bill);
 
     const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 

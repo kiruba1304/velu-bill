@@ -11,7 +11,7 @@ import {
   Eye,
   Share2,
 } from 'lucide-react';
-import { useProducts, useCustomers, useBills } from '../hooks/useDatabase';
+import { useProducts, useCustomers, useBills, useBikes } from '../hooks/useDatabase';
 import { useAuth } from '../hooks/useAuth';
 import { getStoreSettings } from '../utils/getStoreSettings';
 import { Bill } from '../types';
@@ -34,9 +34,68 @@ interface DashboardProps {
 
 const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const { products, loading: productsLoading } = useProducts();
+  const { bikes } = useBikes(0);
   const { activeBranchId, branches } = useAuth();
   const [sharingBill, setSharingBill] = useState<Bill | null>(null);
   const { customers, loading: customersLoading } = useCustomers();
+
+  // Helper to resolve product details for regular products vs showroom bikes (-888)
+  const resolveProductDetails = (productId: number, item: any, bill: Bill) => {
+    const p = products.find(pp => pp.id === productId);
+    let name = p?.name || item.product?.name || `Product #${productId}`;
+    let code = p?.productCode || item.product?.productCode || '';
+    let company = p?.company || item.product?.company || '';
+
+    if (productId === -888) {
+      const billDateStr = bill.createdAt ? new Date(bill.createdAt).toISOString().split('T')[0] : '';
+      const soldBike = (bikes || []).find(bike => 
+        bike.status === 'sold' && 
+        bike.soldToCustomerId === bill.customerId && 
+        (bike.saleDate === billDateStr || (bike.saleDate && bill.createdAt && new Date(bike.saleDate).toDateString() === new Date(bill.createdAt).toDateString()))
+      );
+      if (soldBike) {
+        name = `${soldBike.brand} ${soldBike.modelName} (Showroom Bike)`;
+        code = soldBike.chassisNumber;
+        company = `Chassis: ${soldBike.chassisNumber} | Engine: ${soldBike.engineNumber}`;
+      } else {
+        name = 'Showroom Bike Sale';
+        code = 'BIKE';
+      }
+    }
+
+    return { name, code, company };
+  };
+
+  const populateBillItems = (bill: Bill) => {
+    return {
+      ...bill,
+      items: (bill.items || []).map(item => {
+        let prod = products.find(p => p.id === item.productId) || item.product;
+        if (item.productId === -888 && !prod) {
+          const { name, code, company } = resolveProductDetails(item.productId, item, bill);
+          prod = {
+            id: -888,
+            name,
+            company,
+            productCode: code,
+            barcode: `BIKE_${code}`,
+            count: 1,
+            costPrice: 0,
+            sellingPrice: item.unitPrice,
+            discount: item.discount,
+            gst: item.gst,
+            finalPrice: item.totalPrice,
+            createdAt: bill.createdAt,
+            updatedAt: bill.createdAt
+          };
+        }
+        return {
+          ...item,
+          product: prod
+        };
+      })
+    };
+  };
 
   // Calculate real statistics
   const totalProducts = products.length;
@@ -124,13 +183,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   const recentBills = bills.slice(0, 5);
 
   const handlePrintBill = (bill: Bill) => {
-    const populatedBill = {
-      ...bill,
-      items: (bill.items || []).map(item => ({
-        ...item,
-        product: products.find(p => p.id === item.productId) || item.product
-      }))
-    };
+    const populatedBill = populateBillItems(bill);
 
     const printWindow = window.open('', '_blank');
     if (!printWindow) return;
@@ -186,13 +239,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   };
 
   const handlePreviewBill = (bill: Bill) => {
-    const populatedBill = {
-      ...bill,
-      items: (bill.items || []).map(item => ({
-        ...item,
-        product: products.find(p => p.id === item.productId) || item.product
-      }))
-    };
+    const populatedBill = populateBillItems(bill);
 
     const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 
@@ -235,13 +282,7 @@ const Dashboard: React.FC<DashboardProps> = ({ onNavigate }) => {
   };
 
   const handleShareBill = (bill: Bill) => {
-    const populatedBill = {
-      ...bill,
-      items: (bill.items || []).map(item => ({
-        ...item,
-        product: products.find(p => p.id === item.productId) || item.product
-      }))
-    };
+    const populatedBill = populateBillItems(bill);
 
     const settings = getStoreSettings(bill.branchId, branches, activeBranchId);
 

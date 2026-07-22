@@ -546,7 +546,6 @@ const SaleBike: React.FC = () => {
       const cust = customers.find(c => c.id === loggingVisit.customerId);
       const bike = bikes.find(b => b.id === loggingVisit.bikeId);
       const storeSettings = getStoreSettings();
-      const storeName = storeSettings.storeName || 'SAM Motors';
 
       if (cust && cust.phone) {
         const messageText = generateVisitCompletedWhatsAppMessage(
@@ -1143,7 +1142,6 @@ const SaleBike: React.FC = () => {
     const cust = customers.find(c => c.id === reminder.customerId);
     const bike = bikes.find(b => b.id === reminder.bikeId);
     const storeSettings = getStoreSettings();
-    const storeName = storeSettings.storeName || 'SAM Motors';
 
     if (!cust || !cust.phone) {
       alert('Customer has no phone number registered.');
