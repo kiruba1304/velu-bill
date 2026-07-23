@@ -27,6 +27,7 @@ async function initDb() {
     port: parseInt(process.env.DB_PORT) || 3306,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
+    charset: 'utf8mb4',
     waitForConnections: true,
     connectionLimit: 10,
     maxIdle: 5,
@@ -431,6 +432,66 @@ async function initDb() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS CampaignLogs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      customerName VARCHAR(255) NOT NULL,
+      phone VARCHAR(255) NOT NULL,
+      messageText TEXT,
+      attachments JSON NULL,
+      status VARCHAR(50) NOT NULL,
+      error TEXT NULL,
+      sentAt VARCHAR(255) NOT NULL,
+      branchId INT DEFAULT 1
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS CampaignTemplates (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      templateText TEXT NOT NULL,
+      branchId INT DEFAULT 1,
+      createdAt VARCHAR(255),
+      updatedAt VARCHAR(255)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
+  // Ensure utf8mb4 conversion if table was previously created with wrong default collation
+  try {
+    await pool.query('ALTER TABLE CampaignLogs CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+    await pool.query('ALTER TABLE CampaignTemplates CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+  } catch (err) {
+    console.error('Failed to convert campaign tables to utf8mb4:', err);
+  }
+
+  // Auto-seed default presets if empty
+  const [existingTemplates] = await pool.query('SELECT COUNT(*) as count FROM CampaignTemplates');
+  if (existingTemplates[0].count === 0) {
+    const now = new Date().toISOString();
+    const defaults = [
+      {
+        title: '🎉 Festival Greetings',
+        text: `Dear {customer_name},\n\nWishing you and your family a very happy and prosperous festival season! May this year bring you joy, peace, and success.\n\nWarm regards,\n{store_name}`
+      },
+      {
+        title: '🎁 Birthday Special',
+        text: `Dear {customer_name},\n\nHappy Birthday! 🎂 We hope you have a fantastic day. To celebrate your special day, enjoy a special discount on your next visit.\n\nBest wishes,\n{store_name}`
+      },
+      {
+        title: '🛠️ Service Special',
+        text: `Dear {customer_name},\n\nIs your vehicle due for servicing? Keep your ride running smoothly! Book your service with our authorized workshop this week and get a flat 10% discount on labor charges.\n\nContact us: {store_phone}\n{store_name}`
+      }
+    ];
+    for (const d of defaults) {
+      await pool.query(
+        'INSERT INTO CampaignTemplates (title, templateText, branchId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)',
+        [d.title, d.text, 1, now, now]
+      );
+    }
+    console.log('Seeded default campaign templates.');
+  }
+
   // Helper to add branchId column to tables if not present
   async function addColumnIfNotExists(tableName, columnName, definition) {
     try {
@@ -450,6 +511,7 @@ async function initDb() {
 
   // Add branchId to isolated tables
   await addColumnIfNotExists('Users', 'branchId', 'INT NULL');
+  await addColumnIfNotExists('Users', 'phone', 'VARCHAR(50) NULL');
   await addColumnIfNotExists('Products', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Categories', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Customers', 'branchId', 'INT NULL DEFAULT 1');
@@ -720,6 +782,10 @@ const KEY_MAPPINGS = {
   saledate: 'saleDate',
   customername: 'customerName',
   customerphone: 'customerPhone',
+  messagetext: 'messageText',
+  attachments: 'attachments',
+  sentat: 'sentAt',
+  templatetext: 'templateText',
   gstnumber: 'gstNumber',
   sgstamount: 'sgstAmount',
   cgstamount: 'cgstAmount',
@@ -1702,7 +1768,7 @@ async function _executeDbCallInner(method, args) {
       return rows[0];
     }
     case 'getUsers': {
-      const [rows] = await pool.query('SELECT id, username, role, name, branchId, createdAt FROM Users ORDER BY id ASC');
+      const [rows] = await pool.query('SELECT id, username, role, name, branchId, phone, createdAt FROM Users ORDER BY id ASC');
       return rows;
     }
     case 'createUser': {
@@ -1710,8 +1776,8 @@ async function _executeDbCallInner(method, args) {
       const hashed = hashPassword(userData.password);
       const now = new Date().toISOString();
       const [res] = await pool.query(
-        'INSERT INTO Users (username, password, role, name, branchId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [userData.username, hashed, userData.role, userData.name || '', userData.branchId !== undefined ? userData.branchId : null, now, now]
+        'INSERT INTO Users (username, password, role, name, branchId, phone, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [userData.username, hashed, userData.role, userData.name || '', userData.branchId !== undefined ? userData.branchId : null, userData.phone || null, now, now]
       );
       return res.insertId;
     }
@@ -2072,6 +2138,75 @@ async function _executeDbCallInner(method, args) {
     case 'deleteExpense': {
       const [id] = args;
       const [res] = await pool.query('DELETE FROM Expenses WHERE id = ?', [id]);
+      return res.affectedRows > 0;
+    }
+    case 'getCampaignLogs': {
+      const [branchId] = args;
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM CampaignLogs ORDER BY id DESC')
+        : await pool.query('SELECT * FROM CampaignLogs WHERE branchId = ? OR branchId IS NULL ORDER BY id DESC', [branchId || 1]);
+      return rows.map(r => ({
+        ...r,
+        attachments: parseJsonField(r.attachments)
+      }));
+    }
+    case 'createCampaignLog': {
+      const [logData] = args;
+      const now = new Date().toISOString();
+      const [res] = await pool.query(
+        `INSERT INTO CampaignLogs (customerName, phone, messageText, attachments, status, error, sentAt, branchId)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          logData.customerName,
+          logData.phone,
+          logData.messageText || '',
+          JSON.stringify(logData.attachments || []),
+          logData.status,
+          logData.error || null,
+          now,
+          logData.branchId || 1
+        ]
+      );
+      return res.insertId;
+    }
+    case 'deleteCampaignLog': {
+      const [id] = args;
+      const [res] = await pool.query('DELETE FROM CampaignLogs WHERE id = ?', [id]);
+      return res.affectedRows > 0;
+    }
+    case 'clearCampaignLogs': {
+      const [branchId] = args;
+      const [res] = (branchId === 0)
+        ? await pool.query('DELETE FROM CampaignLogs')
+        : await pool.query('DELETE FROM CampaignLogs WHERE branchId = ?', [branchId || 1]);
+      return res.affectedRows > 0;
+    }
+    case 'getCampaignTemplates': {
+      const [branchId] = args;
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM CampaignTemplates ORDER BY id DESC')
+        : await pool.query('SELECT * FROM CampaignTemplates WHERE branchId = ? OR branchId IS NULL ORDER BY id DESC', [branchId || 1]);
+      return rows;
+    }
+    case 'createCampaignTemplate': {
+      const [templateData] = args;
+      const now = new Date().toISOString();
+      const [res] = await pool.query(
+        `INSERT INTO CampaignTemplates (title, templateText, branchId, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          templateData.title,
+          templateData.templateText,
+          templateData.branchId || 1,
+          now,
+          now
+        ]
+      );
+      return res.insertId;
+    }
+    case 'deleteCampaignTemplate': {
+      const [id] = args;
+      const [res] = await pool.query('DELETE FROM CampaignTemplates WHERE id = ?', [id]);
       return res.affectedRows > 0;
     }
     default:

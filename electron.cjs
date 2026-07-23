@@ -77,12 +77,28 @@ let pool;
 // Stored so reconnectPool() can rebuild the pool with the same config
 let dbConfig = null;
 
+let dbInitPromise = null;
+
 async function initDb() {
+  if (dbInitPromise) {
+    return dbInitPromise;
+  }
+  dbInitPromise = _initDbInternal();
+  try {
+    await dbInitPromise;
+  } catch (err) {
+    dbInitPromise = null; // Clear promise so we can retry on next call
+    throw err;
+  }
+}
+
+async function _initDbInternal() {
   const config = {
     host: process.env.DB_HOST,
     port: parseInt(process.env.DB_PORT) || 3306,
     user: process.env.DB_USER,
     password: process.env.DB_PASSWORD,
+    charset: 'utf8mb4',
     waitForConnections: true,
     connectionLimit: 10,
     maxIdle: 5,
@@ -481,6 +497,66 @@ async function initDb() {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS CampaignLogs (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      customerName VARCHAR(255) NOT NULL,
+      phone VARCHAR(255) NOT NULL,
+      messageText TEXT,
+      attachments JSON NULL,
+      status VARCHAR(50) NOT NULL,
+      error TEXT NULL,
+      sentAt VARCHAR(255) NOT NULL,
+      branchId INT DEFAULT 1
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS CampaignTemplates (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      title VARCHAR(255) NOT NULL,
+      templateText TEXT NOT NULL,
+      branchId INT DEFAULT 1,
+      createdAt VARCHAR(255),
+      updatedAt VARCHAR(255)
+    ) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
+  `);
+
+  // Ensure utf8mb4 conversion if table was previously created with wrong default collation
+  try {
+    await pool.query('ALTER TABLE CampaignLogs CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+    await pool.query('ALTER TABLE CampaignTemplates CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci');
+  } catch (err) {
+    console.error('Failed to convert campaign tables to utf8mb4:', err);
+  }
+
+  // Auto-seed default presets if empty
+  const [existingTemplates] = await pool.query('SELECT COUNT(*) as count FROM CampaignTemplates');
+  if (existingTemplates[0].count === 0) {
+    const now = new Date().toISOString();
+    const defaults = [
+      {
+        title: '🎉 Festival Greetings',
+        text: `Dear {customer_name},\n\nWishing you and your family a very happy and prosperous festival season! May this year bring you joy, peace, and success.\n\nWarm regards,\n{store_name}`
+      },
+      {
+        title: '🎁 Birthday Special',
+        text: `Dear {customer_name},\n\nHappy Birthday! 🎂 We hope you have a fantastic day. To celebrate your special day, enjoy a special discount on your next visit.\n\nBest wishes,\n{store_name}`
+      },
+      {
+        title: '🛠️ Service Special',
+        text: `Dear {customer_name},\n\nIs your vehicle due for servicing? Keep your ride running smoothly! Book your service with our authorized workshop this week and get a flat 10% discount on labor charges.\n\nContact us: {store_phone}\n{store_name}`
+      }
+    ];
+    for (const d of defaults) {
+      await pool.query(
+        'INSERT INTO CampaignTemplates (title, templateText, branchId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?)',
+        [d.title, d.text, 1, now, now]
+      );
+    }
+    console.log('Seeded default campaign templates.');
+  }
+
   // Helper to add branchId column to tables if not present
   async function addColumnIfNotExists(tableName, columnName, definition) {
     try {
@@ -500,6 +576,7 @@ async function initDb() {
 
   // Add branchId to isolated tables
   await addColumnIfNotExists('Users', 'branchId', 'INT NULL');
+  await addColumnIfNotExists('Users', 'phone', 'VARCHAR(50) NULL');
   await addColumnIfNotExists('Products', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Categories', 'branchId', 'INT NULL DEFAULT 1');
   await addColumnIfNotExists('Customers', 'branchId', 'INT NULL DEFAULT 1');
@@ -1302,6 +1379,10 @@ const KEY_MAPPINGS = {
   saledate: 'saleDate',
   customername: 'customerName',
   customerphone: 'customerPhone',
+  messagetext: 'messageText',
+  attachments: 'attachments',
+  sentat: 'sentAt',
+  templatetext: 'templateText',
   gstnumber: 'gstNumber',
   sgstamount: 'sgstAmount',
   cgstamount: 'cgstAmount',
@@ -1340,7 +1421,8 @@ function normalizeKeys(obj) {
 
 async function executeDbCall(method, args) {
   if (!pool) {
-    throw new Error('Database not initialized');
+    console.log('[executeDbCall] Database not initialized. Attempting lazy connection...');
+    await initDb();
   }
 
   // Inner runner – extracted so we can retry once after reconnect
@@ -2285,7 +2367,7 @@ async function _executeDbCallInner(method, args) {
       return rows[0];
     }
     case 'getUsers': {
-      const [rows] = await pool.query('SELECT id, username, role, name, branchId, createdAt FROM Users ORDER BY id ASC');
+      const [rows] = await pool.query('SELECT id, username, role, name, branchId, phone, createdAt FROM Users ORDER BY id ASC');
       return rows;
     }
     case 'createUser': {
@@ -2293,8 +2375,8 @@ async function _executeDbCallInner(method, args) {
       const hashed = hashPassword(userData.password);
       const now = new Date().toISOString();
       const [res] = await pool.query(
-        'INSERT INTO Users (username, password, role, name, branchId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?)',
-        [userData.username, hashed, userData.role, userData.name || '', userData.branchId !== undefined ? userData.branchId : null, now, now]
+        'INSERT INTO Users (username, password, role, name, branchId, phone, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        [userData.username, hashed, userData.role, userData.name || '', userData.branchId !== undefined ? userData.branchId : null, userData.phone || null, now, now]
       );
       return res.insertId;
     }
@@ -2657,6 +2739,75 @@ async function _executeDbCallInner(method, args) {
       const [res] = await pool.query('DELETE FROM Expenses WHERE id = ?', [id]);
       return res.affectedRows > 0;
     }
+    case 'getCampaignLogs': {
+      const [branchId] = args;
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM CampaignLogs ORDER BY id DESC')
+        : await pool.query('SELECT * FROM CampaignLogs WHERE branchId = ? OR branchId IS NULL ORDER BY id DESC', [branchId || 1]);
+      return rows.map(r => ({
+        ...r,
+        attachments: parseJsonField(r.attachments)
+      }));
+    }
+    case 'createCampaignLog': {
+      const [logData] = args;
+      const now = new Date().toISOString();
+      const [res] = await pool.query(
+        `INSERT INTO CampaignLogs (customerName, phone, messageText, attachments, status, error, sentAt, branchId)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          logData.customerName,
+          logData.phone,
+          logData.messageText || '',
+          JSON.stringify(logData.attachments || []),
+          logData.status,
+          logData.error || null,
+          now,
+          logData.branchId || 1
+        ]
+      );
+      return res.insertId;
+    }
+    case 'deleteCampaignLog': {
+      const [id] = args;
+      const [res] = await pool.query('DELETE FROM CampaignLogs WHERE id = ?', [id]);
+      return res.affectedRows > 0;
+    }
+    case 'clearCampaignLogs': {
+      const [branchId] = args;
+      const [res] = (branchId === 0)
+        ? await pool.query('DELETE FROM CampaignLogs')
+        : await pool.query('DELETE FROM CampaignLogs WHERE branchId = ?', [branchId || 1]);
+      return res.affectedRows > 0;
+    }
+    case 'getCampaignTemplates': {
+      const [branchId] = args;
+      const [rows] = (branchId === 0)
+        ? await pool.query('SELECT * FROM CampaignTemplates ORDER BY id DESC')
+        : await pool.query('SELECT * FROM CampaignTemplates WHERE branchId = ? OR branchId IS NULL ORDER BY id DESC', [branchId || 1]);
+      return rows;
+    }
+    case 'createCampaignTemplate': {
+      const [templateData] = args;
+      const now = new Date().toISOString();
+      const [res] = await pool.query(
+        `INSERT INTO CampaignTemplates (title, templateText, branchId, createdAt, updatedAt)
+         VALUES (?, ?, ?, ?, ?)`,
+        [
+          templateData.title,
+          templateData.templateText,
+          templateData.branchId || 1,
+          now,
+          now
+        ]
+      );
+      return res.insertId;
+    }
+    case 'deleteCampaignTemplate': {
+      const [id] = args;
+      const [res] = await pool.query('DELETE FROM CampaignTemplates WHERE id = ?', [id]);
+      return res.affectedRows > 0;
+    }
     default:
       throw new Error(`Unknown method: ${method}`);
   }
@@ -2905,7 +3056,7 @@ ipcMain.handle('send-whatsapp-auto', async (event, payload) => {
 });
 
 ipcMain.handle('send-whatsapp-ads', async (event, payload) => {
-  const { phone, text, imageBase64, imageMimeType, imageFileName } = payload || {};
+  const { phone, text, imageBase64, imageMimeType, imageFileName, files } = payload || {};
   if (!waClient || waStatus !== 'connected') {
     throw new Error('WhatsApp is not paired/connected. Please pair WhatsApp in Settings -> WhatsApp Automation.');
   }
@@ -2917,13 +3068,42 @@ ipcMain.handle('send-whatsapp-ads', async (event, payload) => {
   const formattedPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
   const chatId = `${formattedPhone}@c.us`;
 
-  if (imageBase64 && imageMimeType) {
-    const base64Data = imageBase64.includes(';base64,') 
-      ? imageBase64.split(';base64,')[1] 
-      : imageBase64;
-    const media = new WAMessageMedia(imageMimeType, base64Data, imageFileName || 'image.jpg');
-    await waClient.sendMessage(chatId, media, { caption: text });
+  // Normalize files array to handle both old single upload and new multi-file upload
+  let allFiles = [];
+  if (files && Array.isArray(files) && files.length > 0) {
+    allFiles = files;
+  } else if (imageBase64 && imageMimeType) {
+    allFiles = [{
+      base64: imageBase64,
+      mimeType: imageMimeType,
+      fileName: imageFileName || 'image.jpg'
+    }];
+  }
+
+  if (allFiles.length > 0) {
+    // Send the first file with the customized text as caption
+    const firstFile = allFiles[0];
+    const base64Data = firstFile.base64.includes(';base64,') 
+      ? firstFile.base64.split(';base64,')[1] 
+      : firstFile.base64;
+    const media = new WAMessageMedia(firstFile.mimeType, base64Data, firstFile.fileName || 'file');
+    
+    await waClient.sendMessage(chatId, media, { caption: text || undefined });
+
+    // Send any remaining files sequentially with a small delay
+    for (let i = 1; i < allFiles.length; i++) {
+      const file = allFiles[i];
+      const fileBase64 = file.base64.includes(';base64,') 
+        ? file.base64.split(';base64,')[1] 
+        : file.base64;
+      const fileMedia = new WAMessageMedia(file.mimeType, fileBase64, file.fileName || 'file');
+      await waClient.sendMessage(chatId, fileMedia);
+      
+      // 1 second delay between consecutive attachments
+      await new Promise(r => setTimeout(r, 1000));
+    }
   } else {
+    // If no attachments, send text message alone
     await waClient.sendMessage(chatId, text);
   }
   return true;

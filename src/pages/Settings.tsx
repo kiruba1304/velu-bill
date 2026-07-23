@@ -133,7 +133,8 @@ const Settings: React.FC = () => {
     password: '',
     name: '',
     role: 'employee' as 'super_admin' | 'admin' | 'sub_admin' | 'employee',
-    branchId: '' as string | number
+    branchId: '' as string | number,
+    phone: ''
   });
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [showUserForm, setShowUserForm] = useState(false);
@@ -330,6 +331,7 @@ const Settings: React.FC = () => {
           name: userForm.name.trim(),
           role: userForm.role,
           branchId: selectedBranchId,
+          phone: userForm.phone.trim(),
           ...(userForm.password ? { password: userForm.password } : {})
         });
       } else {
@@ -342,7 +344,8 @@ const Settings: React.FC = () => {
           password: userForm.password,
           name: userForm.name.trim(),
           role: userForm.role,
-          branchId: selectedBranchId
+          branchId: selectedBranchId,
+          phone: userForm.phone.trim()
         });
       }
       alert('User details saved successfully!');
@@ -374,7 +377,8 @@ const Settings: React.FC = () => {
       password: '', 
       name: '', 
       role: 'employee', 
-      branchId: isSubAdmin && currentUser?.branchId ? String(currentUser.branchId) : '' 
+      branchId: isSubAdmin && currentUser?.branchId ? String(currentUser.branchId) : '',
+      phone: ''
     });
     setEditingUserId(null);
     setShowUserForm(false);
@@ -1604,6 +1608,16 @@ const Settings: React.FC = () => {
                     />
                   </div>
                   <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Phone Number</label>
+                    <input
+                      type="text"
+                      value={userForm.phone}
+                      onChange={(e) => setUserForm(prev => ({ ...prev, phone: e.target.value }))}
+                      className="input w-full"
+                      placeholder="e.g. 9876543210"
+                    />
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Account Role</label>
                     <select
                       value={userForm.role}
@@ -1658,6 +1672,7 @@ const Settings: React.FC = () => {
                       <tr>
                         <th className="px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Name</th>
                         <th className="px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Username</th>
+                        <th className="px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Phone</th>
                         <th className="px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Role</th>
                         <th className="px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Branch</th>
                         <th className="px-6 py-3.5 text-left text-xs font-semibold uppercase tracking-wider text-slate-500">Created Date</th>
@@ -1669,6 +1684,7 @@ const Settings: React.FC = () => {
                         <tr key={u.id}>
                           <td className="whitespace-nowrap px-6 py-4 text-sm font-semibold text-slate-900">{u.name || 'N/A'}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600 font-medium">{u.username}</td>
+                          <td className="whitespace-nowrap px-6 py-4 text-sm text-slate-600 font-medium">{u.phone || 'N/A'}</td>
                           <td className="whitespace-nowrap px-6 py-4 text-sm">
                             <span className={`inline-flex rounded-full px-2.5 py-0.5 text-xs font-semibold leading-5 ${
                               u.role === 'super_admin' ? 'bg-purple-100 text-purple-800' :
@@ -1694,7 +1710,8 @@ const Settings: React.FC = () => {
                                     password: '',
                                     name: u.name || '',
                                     role: u.role,
-                                    branchId: u.branchId !== null && u.branchId !== undefined ? String(u.branchId) : ''
+                                    branchId: u.branchId !== null && u.branchId !== undefined ? String(u.branchId) : '',
+                                    phone: u.phone || ''
                                   });
                                   setShowUserForm(true);
                                 }}
